@@ -1,0 +1,1730 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Course Build Tracker</title>
+<style>
+/* ============================================================
+   Course Build Tracker — single file, offline, vanilla JS
+   Visual direction (spec §6): dense, quiet, neutral. The status
+   ramp is the only strong colour: a single green hue rising in
+   saturation across todo→tested so progress reads left-to-right.
+   blocked breaks the ramp as amber; not-needed recedes to grey.
+   ============================================================ */
+:root{
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --fs-xs: 11px; --fs-sm: 12.5px; --fs-md: 14px; --fs-lg: 19px;
+  --w-reg: 400; --w-semi: 600;
+  --sp: 8px;
+  --radius: 6px;
+
+  --bg:#f5f6f8; --surface:#ffffff; --panel:#fbfcfd; --raised:#ffffff;
+  --border:#e0e3e8; --border-strong:#c9ced6;
+  --text:#1b2026; --muted:#6a727e; --faint:#9aa2ad;
+  --accent:#1f7a5a; --accent-fg:#ffffff;
+  --shadow: 0 1px 2px rgba(20,25,30,.06), 0 6px 20px rgba(20,25,30,.07);
+  --warn:#b25a12;
+
+  /* status ramp — light */
+  --st-not-needed-bg:#eceef1; --st-not-needed-fg:#8b929c; --st-not-needed-br:#dfe2e7;
+  --st-blocked-bg:#fbe6cf; --st-blocked-fg:#9a5410; --st-blocked-br:#eabf8f;
+  --st-todo-bg:#e7ebf0; --st-todo-fg:#495260; --st-todo-br:#d4dae2;
+  --st-specced-bg:#d5ece0; --st-specced-fg:#276b4d; --st-specced-br:#b6dcc9;
+  --st-in-progress-bg:#b3e0c9; --st-in-progress-fg:#1c6446; --st-in-progress-br:#8fd0af;
+  --st-built-bg:#79c9a1; --st-built-fg:#0f4d33; --st-built-br:#5bbb8b;
+  --st-tested-bg:#1f9e6b; --st-tested-fg:#ffffff; --st-tested-br:#178b5d;
+}
+:root[data-theme="dark"]{
+  --bg:#131619; --surface:#1b1f24; --panel:#171b1f; --raised:#20252b;
+  --border:#2a3037; --border-strong:#3a424b;
+  --text:#e6e9ec; --muted:#98a0aa; --faint:#69717b;
+  --accent:#3bbd8a; --accent-fg:#0c1512;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+  --warn:#e0a25f;
+
+  --st-not-needed-bg:#23282e; --st-not-needed-fg:#7b838d; --st-not-needed-br:#2d333a;
+  --st-blocked-bg:#4a3316; --st-blocked-fg:#e7b073; --st-blocked-br:#5e441f;
+  --st-todo-bg:#262c33; --st-todo-fg:#aab3bd; --st-todo-br:#333a42;
+  --st-specced-bg:#1e3a2d; --st-specced-fg:#7fcea6; --st-specced-br:#2a4c3b;
+  --st-in-progress-bg:#22503a; --st-in-progress-fg:#96dcb6; --st-in-progress-br:#2f6349;
+  --st-built-bg:#2c6b4c; --st-built-fg:#c3edd5; --st-built-br:#38805c;
+  --st-tested-bg:#33b481; --st-tested-fg:#08130d; --st-tested-br:#2aa273;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#131619; --surface:#1b1f24; --panel:#171b1f; --raised:#20252b;
+    --border:#2a3037; --border-strong:#3a424b;
+    --text:#e6e9ec; --muted:#98a0aa; --faint:#69717b;
+    --accent:#3bbd8a; --accent-fg:#0c1512;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    --warn:#e0a25f;
+    --st-not-needed-bg:#23282e; --st-not-needed-fg:#7b838d; --st-not-needed-br:#2d333a;
+    --st-blocked-bg:#4a3316; --st-blocked-fg:#e7b073; --st-blocked-br:#5e441f;
+    --st-todo-bg:#262c33; --st-todo-fg:#aab3bd; --st-todo-br:#333a42;
+    --st-specced-bg:#1e3a2d; --st-specced-fg:#7fcea6; --st-specced-br:#2a4c3b;
+    --st-in-progress-bg:#22503a; --st-in-progress-fg:#96dcb6; --st-in-progress-br:#2f6349;
+    --st-built-bg:#2c6b4c; --st-built-fg:#c3edd5; --st-built-br:#38805c;
+    --st-tested-bg:#33b481; --st-tested-fg:#08130d; --st-tested-br:#2aa273;
+  }
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--font); font-size:var(--fs-md); line-height:1.5;
+  color:var(--text); background:var(--bg);
+  -webkit-font-smoothing:antialiased;
+}
+button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
+input,textarea,select{font-family:inherit;font-size:inherit;color:inherit}
+a{color:inherit}
+::selection{background:var(--st-in-progress-bg)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:3px}
+
+.mono{font-family:var(--mono)}
+.muted{color:var(--muted)}
+.faint{color:var(--faint)}
+
+/* ---------- top bar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:40;
+  display:flex;align-items:center;gap:14px;
+  padding:9px 16px; background:var(--surface);
+  border-bottom:1px solid var(--border);
+}
+.brand{display:flex;flex-direction:column;line-height:1.15;margin-right:4px}
+.brand b{font-weight:var(--w-semi);font-size:var(--fs-md);letter-spacing:-.01em}
+.brand span{font-size:var(--fs-xs);color:var(--muted)}
+.nav{display:flex;gap:2px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:2px}
+.nav button{
+  border:0;background:transparent;padding:5px 12px;border-radius:6px;
+  font-size:var(--fs-sm);color:var(--muted);display:flex;align-items:center;gap:7px;
+}
+.nav button .k{font-family:var(--mono);font-size:10px;color:var(--faint);border:1px solid var(--border);border-radius:3px;padding:0 3px}
+.nav button.active{background:var(--surface);color:var(--text);box-shadow:var(--shadow);font-weight:var(--w-semi)}
+.nav button.active .k{color:var(--muted)}
+.spacer{flex:1}
+.searchbox{position:relative;display:flex;align-items:center}
+.searchbox input{
+  width:210px;padding:6px 10px 6px 28px;border:1px solid var(--border);border-radius:7px;
+  background:var(--panel);font-size:var(--fs-sm);
+}
+.searchbox .mag{position:absolute;left:9px;color:var(--faint);font-size:13px;pointer-events:none}
+.iconbtn{
+  border:1px solid var(--border);background:var(--panel);border-radius:7px;
+  padding:6px 10px;font-size:var(--fs-sm);color:var(--muted);display:flex;align-items:center;gap:6px;
+}
+.iconbtn:hover{color:var(--text);border-color:var(--border-strong)}
+.menu-wrap{position:relative}
+.menu{
+  position:absolute;right:0;top:calc(100% + 6px);z-index:50;
+  background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:var(--shadow);
+  min-width:230px;padding:6px;
+}
+.menu button{display:flex;width:100%;text-align:left;border:0;background:transparent;padding:8px 10px;border-radius:6px;font-size:var(--fs-sm);gap:8px;align-items:center;justify-content:space-between}
+.menu button:hover{background:var(--panel)}
+.menu .sep{height:1px;background:var(--border);margin:5px 4px}
+.menu .lbl{font-size:var(--fs-xs);color:var(--faint);padding:6px 10px 3px;text-transform:uppercase;letter-spacing:.05em}
+.seg{display:flex;gap:2px;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:2px;margin:2px 6px}
+.seg button{flex:1;justify-content:center;padding:5px;border-radius:4px;font-size:var(--fs-xs)}
+.seg button.on{background:var(--surface);box-shadow:var(--shadow);color:var(--text);font-weight:var(--w-semi)}
+
+/* ---------- layout ---------- */
+.view{padding:14px 16px 60px}
+.hidden{display:none !important}
+
+/* ---------- status chip ---------- */
+.chip{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:2px 8px;border-radius:20px;font-size:var(--fs-xs);font-weight:var(--w-semi);
+  border:1px solid transparent;white-space:nowrap;line-height:1.7;
+}
+.chip[data-st="not-needed"]{background:var(--st-not-needed-bg);color:var(--st-not-needed-fg);border-color:var(--st-not-needed-br);font-weight:var(--w-reg);font-style:italic}
+.chip[data-st="blocked"]{background:var(--st-blocked-bg);color:var(--st-blocked-fg);border-color:var(--st-blocked-br)}
+.chip[data-st="todo"]{background:var(--st-todo-bg);color:var(--st-todo-fg);border-color:var(--st-todo-br)}
+.chip[data-st="specced"]{background:var(--st-specced-bg);color:var(--st-specced-fg);border-color:var(--st-specced-br)}
+.chip[data-st="in-progress"]{background:var(--st-in-progress-bg);color:var(--st-in-progress-fg);border-color:var(--st-in-progress-br)}
+.chip[data-st="built"]{background:var(--st-built-bg);color:var(--st-built-fg);border-color:var(--st-built-br)}
+.chip[data-st="tested"]{background:var(--st-tested-bg);color:var(--st-tested-fg);border-color:var(--st-tested-br)}
+
+.ttag{font-family:var(--mono);font-size:10px;letter-spacing:.02em;color:var(--muted);text-transform:uppercase;border:1px solid var(--border);border-radius:4px;padding:1px 5px;background:var(--panel)}
+.badge{font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:4px;border:1px solid var(--border);color:var(--muted);background:var(--panel)}
+.badge.tier1{border-color:var(--st-built-br);color:var(--st-built-fg);background:var(--st-specced-bg)}
+.badge.tier2{border-color:var(--border-strong)}
+.badge.tier3{opacity:.6}
+.badge.over{color:#b23b3b;border-color:#e2a5a5;background:#fbe7e7}
+:root[data-theme="dark"] .badge.over{color:#f0a3a3;border-color:#7a3b3b;background:#3a2020}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .badge.over{color:#f0a3a3;border-color:#7a3b3b;background:#3a2020}}
+
+/* ---------- board ---------- */
+.filters{
+  display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;
+  padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:9px;margin-bottom:12px;
+}
+.fgroup{display:flex;align-items:center;gap:4px}
+.fgroup > .fglabel{font-size:var(--fs-xs);color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin-right:2px}
+.pill{
+  border:1px solid var(--border);background:var(--panel);border-radius:20px;padding:3px 9px;font-size:var(--fs-xs);color:var(--muted);
+}
+.pill:hover{border-color:var(--border-strong)}
+.pill.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.fdiv{width:1px;height:20px;background:var(--border)}
+.clearf{margin-left:auto;font-size:var(--fs-xs);color:var(--muted);background:none;border:0;text-decoration:underline;text-underline-offset:2px}
+
+.board{display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;align-items:flex-start}
+.col{flex:1 0 190px;min-width:190px;background:var(--panel);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;max-height:calc(100vh - 220px)}
+.col.dragover{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent) inset}
+.col.collapsed{flex:0 0 46px;min-width:46px}
+.colhead{display:flex;align-items:center;gap:6px;padding:9px 10px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+.colhead .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.colhead .name{font-size:var(--fs-sm);font-weight:var(--w-semi);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.colhead .cnt{margin-left:auto;font-family:var(--mono);font-size:var(--fs-xs);color:var(--muted)}
+.col.collapsed .colhead{writing-mode:vertical-rl;transform:rotate(180deg);justify-content:flex-start;height:100%;padding:10px 8px}
+.col.collapsed .cnt{margin-left:0;margin-top:6px}
+.collist{padding:8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
+.col.collapsed .collist{display:none}
+
+.card{
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 10px;
+  box-shadow:0 1px 1px rgba(20,25,30,.04);cursor:grab;
+}
+.card:hover{border-color:var(--border-strong)}
+.card.dragging{opacity:.45}
+.card .r1{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.card .title{font-size:var(--fs-sm);font-weight:var(--w-semi);line-height:1.35;margin:2px 0 6px;letter-spacing:-.005em}
+.card .r2{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.card .init{font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid var(--border);border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center}
+.card .blk{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.blkchip{font-family:var(--mono);font-size:10px;color:var(--st-blocked-fg);background:var(--st-blocked-bg);border:1px solid var(--st-blocked-br);border-radius:4px;padding:1px 5px}
+.prog{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.card .snum{font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:1px 5px;background:var(--panel)}
+.card .snum.course{color:var(--faint)}
+
+/* ---------- matrix ---------- */
+.matwrap{overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:10px}
+table.matrix{border-collapse:collapse;width:100%;min-width:1000px}
+table.matrix th,table.matrix td{border:1px solid var(--border);padding:0;vertical-align:top}
+table.matrix thead th{
+  position:sticky;top:0;z-index:2;background:var(--panel);
+  font-size:var(--fs-xs);font-weight:var(--w-semi);text-transform:uppercase;letter-spacing:.03em;color:var(--muted);
+  padding:7px 6px;text-align:center;white-space:nowrap;
+}
+table.matrix thead th.seshead{text-align:left;min-width:240px;position:sticky;left:0;z-index:3}
+th.seshead,td.sescell{position:sticky;left:0;background:var(--surface);z-index:1}
+td.sescell{padding:7px 9px;min-width:240px;border-left:0}
+.sescell .snhead{display:flex;align-items:baseline;gap:7px;cursor:pointer}
+.sescell .snhead .n{font-family:var(--mono);font-size:var(--fs-sm);color:var(--muted)}
+.sescell .snhead .t{font-size:var(--fs-sm);font-weight:var(--w-semi);line-height:1.25}
+.sescell:hover .snhead .t{text-decoration:underline;text-underline-offset:2px}
+.sescell .meta{display:flex;gap:6px;align-items:center;margin-top:3px}
+.blocktag{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-family:var(--mono)}
+.mwarn{font-family:var(--mono);font-size:10px;color:var(--warn);border:1px solid var(--warn);border-radius:4px;padding:0 4px}
+.matcell{padding:5px;text-align:center;min-width:92px;height:44px}
+.matcell .cellchips{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;align-items:center}
+.emptycell{display:block;width:100%;height:100%;min-height:30px;border:1px dashed var(--border-strong);border-radius:5px;background:transparent;color:var(--faint);opacity:.5}
+.emptycell:hover{opacity:1;border-color:var(--accent);color:var(--accent)}
+.matcell.done{text-align:center;font-family:var(--mono);font-size:var(--fs-xs)}
+td.donecell{text-align:center;font-family:var(--mono);font-size:var(--fs-xs);color:var(--muted);min-width:70px;background:var(--panel)}
+tfoot td{background:var(--panel);font-family:var(--mono);font-size:var(--fs-xs);color:var(--muted);text-align:center;padding:6px}
+tfoot td.sescell{font-family:var(--font);font-weight:var(--w-semi);color:var(--text);text-align:left}
+.minichip{width:11px;height:11px;border-radius:3px;display:inline-block;border:1px solid transparent}
+.printbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+
+/* ---------- sessions view ---------- */
+.sesslayout{display:grid;grid-template-columns:250px 1fr;gap:16px;align-items:start}
+.railwrap{position:sticky;top:64px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px;max-height:calc(100vh - 90px);overflow:auto}
+.railgroup{margin-bottom:8px}
+.railgroup > .gh{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.06em;color:var(--faint);padding:6px 8px 4px}
+.railitem{display:flex;gap:8px;align-items:baseline;width:100%;text-align:left;border:0;background:transparent;padding:6px 8px;border-radius:6px;font-size:var(--fs-sm)}
+.railitem:hover{background:var(--panel)}
+.railitem.active{background:var(--panel);font-weight:var(--w-semi);box-shadow:inset 2px 0 0 var(--accent)}
+.railitem .rn{font-family:var(--mono);font-size:var(--fs-xs);color:var(--muted);flex:none;width:18px}
+.railitem .rt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.spanel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px 22px;max-width:920px}
+.spanel h1{font-size:var(--fs-lg);margin:0 0 3px;letter-spacing:-.01em}
+.spanel .sub{display:flex;flex-wrap:wrap;gap:10px;align-items:center;color:var(--muted);font-size:var(--fs-sm);margin-bottom:14px}
+.spanel .sub .mono{font-size:var(--fs-xs)}
+.strip{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:12px;background:var(--panel)}
+.strip .sh{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:8px}
+.assetchips{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.assetchip{display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:7px;padding:3px 4px 3px 8px;background:var(--surface)}
+.assetchip .an{font-size:var(--fs-sm);cursor:pointer}
+.assetchip select{border:1px solid var(--border);border-radius:5px;padding:2px 4px;font-size:var(--fs-xs);background:var(--panel)}
+.decref{display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:var(--fs-sm)}
+.decref .did{font-family:var(--mono);font-size:var(--fs-xs);color:var(--muted);flex:none}
+
+.field{margin-bottom:14px}
+.field > .flabel{display:flex;align-items:center;gap:8px;font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:5px}
+.field .mins{margin-left:auto;display:flex;align-items:center;gap:4px;color:var(--muted);text-transform:none;letter-spacing:0}
+.field .mins input{width:42px;text-align:right;border:1px solid var(--border);border-radius:5px;padding:2px 5px;font-family:var(--mono);font-size:var(--fs-xs);background:var(--panel)}
+.editable{border:1px solid transparent;border-radius:7px;padding:8px 10px;cursor:text;background:var(--panel);min-height:20px}
+.editable:hover{border-color:var(--border)}
+.editable.empty{color:var(--faint);font-style:italic}
+.editable p{margin:0 0 8px}.editable p:last-child{margin-bottom:0}
+.editable ul{margin:6px 0;padding-left:20px}.editable li{margin:2px 0}
+.editable blockquote{margin:8px 0;padding:4px 12px;border-left:3px solid var(--border-strong);color:var(--muted)}
+.editable strong{font-weight:var(--w-semi)}
+textarea.edit{width:100%;border:1px solid var(--accent);border-radius:7px;padding:8px 10px;background:var(--surface);resize:none;overflow:hidden;line-height:1.55;font-size:var(--fs-md)}
+input.titleedit{width:100%;font-size:var(--fs-lg);font-weight:var(--w-semi);border:1px solid transparent;border-radius:6px;padding:2px 4px;background:transparent;letter-spacing:-.01em}
+input.titleedit:hover{border-color:var(--border)}
+input.titleedit:focus{border-color:var(--accent);background:var(--surface);outline:none}
+.metaedit{border:1px solid transparent;background:transparent;border-radius:5px;padding:2px 6px}
+.metaedit:hover{border-color:var(--border)}
+.metaedit:focus{border-color:var(--accent);background:var(--surface);outline:none}
+
+.readings{list-style:none;margin:0;padding:0}
+.reading{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border)}
+.reading:last-child{border-bottom:0}
+.reading .cite{flex:1;font-size:var(--fs-sm)}
+.reading .cite input{width:100%;border:1px solid transparent;background:transparent;border-radius:5px;padding:3px 5px}
+.reading .cite input:hover{border-color:var(--border)}
+.reading .cite input:focus{border-color:var(--accent);background:var(--surface);outline:none}
+.reading select{border:1px solid var(--border);border-radius:5px;padding:2px 4px;font-size:var(--fs-xs);background:var(--panel)}
+.unverified{font-family:var(--mono);font-size:10px;color:var(--warn);border:1px solid var(--warn);border-radius:4px;padding:1px 5px;white-space:nowrap}
+.minibtn{border:1px solid var(--border);background:var(--panel);border-radius:5px;width:22px;height:22px;padding:0;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;font-size:12px}
+.minibtn:hover{color:var(--text);border-color:var(--border-strong)}
+.minibtn:disabled{opacity:.3;cursor:default}
+.addrow{margin-top:8px}
+.linkbtn{border:0;background:none;color:var(--accent);font-size:var(--fs-sm);padding:4px 0;text-decoration:underline;text-underline-offset:2px}
+.confflags{list-style:none;margin:8px 0 0;padding:0}
+.confflag{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;background:var(--st-blocked-bg);border:1px solid var(--st-blocked-br);color:var(--st-blocked-fg);border-radius:6px;margin-bottom:6px;font-size:var(--fs-sm)}
+.confflag .cf-x{margin-left:auto;background:none;border:0;color:inherit;opacity:.7}
+
+/* ---------- decisions ---------- */
+.dtable{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.dtable th{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.04em;color:var(--muted);text-align:left;padding:9px 12px;background:var(--panel);border-bottom:1px solid var(--border)}
+.dtable td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top;font-size:var(--fs-sm)}
+.dtable tr:last-child td{border-bottom:0}
+.dtable .did{font-family:var(--mono);color:var(--muted)}
+.dtable .dtitle{font-weight:var(--w-semi)}
+.dtable .dbody{color:var(--muted);font-size:var(--fs-xs);margin-top:3px;max-width:420px}
+.dtable select{border:1px solid var(--border);border-radius:5px;padding:3px 5px;font-size:var(--fs-xs);background:var(--panel)}
+.dtable .answer{width:100%;border:1px solid var(--border);border-radius:5px;padding:5px 7px;font-size:var(--fs-sm);background:var(--panel);resize:vertical;min-height:30px}
+.dstat[data-s="open"]{color:var(--warn)}
+.dstat[data-s="answered"]{color:var(--st-tested-bg)}
+.blkcount{font-family:var(--mono);font-size:var(--fs-xs);color:var(--muted)}
+
+/* ---------- slide-over ---------- */
+.scrim{position:fixed;inset:0;background:rgba(15,20,25,.28);z-index:60;opacity:0;pointer-events:none;transition:opacity .18s}
+.scrim.show{opacity:1;pointer-events:auto}
+.slideover{
+  position:fixed;top:0;right:0;height:100vh;width:430px;max-width:92vw;z-index:70;
+  background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow);
+  transform:translateX(100%);transition:transform .2s ease;display:flex;flex-direction:column;
+}
+.slideover.show{transform:translateX(0)}
+.sohead{display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--border)}
+.sohead .ttl{font-weight:var(--w-semi);font-size:var(--fs-md)}
+.sobody{overflow-y:auto;padding:16px;flex:1;display:flex;flex-direction:column;gap:14px}
+.sofield{display:flex;flex-direction:column;gap:5px}
+.sofield > label{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
+.sofield input[type=text],.sofield input[type=date],.sofield select,.sofield textarea{
+  border:1px solid var(--border);border-radius:6px;padding:7px 9px;background:var(--panel);width:100%;font-size:var(--fs-sm);resize:vertical;
+}
+.sorow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.check{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed var(--border)}
+.check input[type=checkbox]{width:15px;height:15px;accent-color:var(--accent)}
+.check .clabel{flex:1;font-size:var(--fs-sm)}
+.check .clabel.done{text-decoration:line-through;color:var(--faint)}
+.check .clabel input{width:100%;border:1px solid transparent;background:transparent;border-radius:4px;padding:2px 4px}
+.check .clabel input:focus{border-color:var(--accent);background:var(--surface);outline:none}
+.blkpick{display:flex;flex-wrap:wrap;gap:5px}
+.blkopt{border:1px solid var(--border);background:var(--panel);border-radius:15px;padding:2px 8px;font-size:var(--fs-xs);font-family:var(--mono);color:var(--muted)}
+.blkopt.on{background:var(--st-blocked-bg);color:var(--st-blocked-fg);border-color:var(--st-blocked-br)}
+.sofoot{padding:12px 16px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.updated{font-family:var(--mono);font-size:var(--fs-xs);color:var(--faint);flex:1}
+.delbtn{border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:6px;padding:6px 11px;font-size:var(--fs-sm)}
+.delbtn.arm{background:#b23b3b;color:#fff;border-color:#b23b3b}
+
+/* ---------- toast ---------- */
+.toast{
+  position:fixed;left:16px;bottom:16px;z-index:90;
+  background:var(--text);color:var(--bg);border-radius:9px;box-shadow:var(--shadow);
+  padding:10px 12px;display:flex;align-items:center;gap:14px;font-size:var(--fs-sm);
+  transform:translateY(140%);transition:transform .22s ease;
+}
+.toast.show{transform:translateY(0)}
+.toast button{background:none;border:0;color:var(--accent);font-weight:var(--w-semi);text-decoration:underline;text-underline-offset:2px}
+:root[data-theme="dark"] .toast button{color:var(--st-tested-bg)}
+
+.addbtn{border:1px dashed var(--border-strong);background:transparent;color:var(--muted);border-radius:6px;padding:3px 9px;font-size:var(--fs-xs)}
+.addbtn:hover{border-color:var(--accent);color:var(--accent)}
+
+@media (max-width:900px){
+  .sesslayout{grid-template-columns:1fr}
+  .railwrap{position:static;max-height:none}
+  .board{flex-direction:column}
+  .col{width:100%;max-height:none}
+  .nav button span.txt{display:none}
+}
+
+/* ---------- print: matrix only, A3 ---------- */
+@media print{
+  @page{size:A3 landscape;margin:8mm}
+  .topbar,.filters,.printbar,.scrim,.slideover,.toast,.no-print{display:none !important}
+  body{background:#fff;color:#000}
+  .view{padding:0}
+  .view:not(.view-matrix){display:none !important}
+  .matwrap{border:0;overflow:visible}
+  table.matrix{min-width:0;width:100%;font-size:9px}
+  table.matrix th,table.matrix td{border-color:#bbb}
+  thead th,td.sescell,th.seshead,td.donecell,tfoot td{position:static;background:#fff !important;color:#000}
+  .emptycell{border-color:#ccc}
+  .chip{border:1px solid #999 !important;color:#000 !important;background:#fff !important}
+  .minichip{border:1px solid #666}
+}
+</style>
+
+<div id="root"></div>
+<div class="scrim" id="scrim"></div>
+<div class="slideover" id="slideover" role="dialog" aria-label="Asset detail"></div>
+<div class="toast" id="toast"></div>
+<input type="file" id="importfile" accept="application/json,.json" class="hidden">
+
+<script>
+"use strict";
+/* =================================================================
+   Seed data. Transcribed from third-places-lesson-plans-v2.md.
+   Segment bodies carry the substance, not a summary (spec §5).
+   Markdown markers (**bold**, *italic*, - bullets, > quote) are
+   preserved so they render in the sessions view.
+   ================================================================= */
+const NOW_SEED = "2026-07-24T00:00:00.000Z";
+
+const SESSIONS_SEED = [
+ { id:"s01", number:1, title:"Is a game a place?", block:"describe", lens:"",
+   question:"What is a third place, and is the thing the client wants to build one?",
+   provocation:{minutes:10, body:"Two images: a Wetherspoons at 4pm and a Discord voice channel. \"Which is a third place? Ninety seconds, and you must commit.\" Take the vote before any input; it is the first entry in the forecast log's informal precursor."},
+   input:{minutes:30, body:"Oldenburg's eight characteristics, delivered fast and without hedging: neutral ground; leveller; conversation as the main activity; accessibility and accommodation; regulars; low profile; playful mood; a home away from home.\n\nThe terminological hazard, explicitly and on a slide: Oldenburg's *third place*, Soja's *Thirdspace* and Bhabha's *third space* are three unrelated literatures. The client means Oldenburg. Students will meet all three in search results and must not conflate them.\n\nThen test the client's proposal against the eight, live. Conversation as the main activity fails. The leveller fails. Neutral ground and accessibility are contested. Four of eight survive comfortably. Do not resolve this; name it as the course's opening problem.\n\nThen the inversion: Steinkuehler & Williams (2006), *JCMC* 11(4), argued that MMOs are structurally similar to Oldenburg's third places and function as sites of informal sociability and social capital; Ducheneaut, Moore & Nickell (2007), *CSCW* 16, made the case in a detailed venue study. So the *game* is already the third place, and the client is proposing a physical container for a virtual one. Ask the room to justify that, cold, with no reading. They will struggle, and should.\n\nClose with the client brief, delivered by the club (see decision D2).\n\nFinal slide, one number, no commentary: **Ungdata, n=70,695, ages 16–18, 2021–23 — 0.7% of girls and 8.8% of boys actively engage in e-sports.** Let it sit. Do not discuss it this week. Everything downstream depends on whether the club accepts it, and the students should carry it unresolved."},
+   activity:{minutes:40, body:"**[OFF] Oldenburg card sort, gaming variant.** Twelve spaces × eight criteria, teams of four, score 0–2 on every criterion, then rank the twelve. The twelve: a Wetherspoons, a **Discord server**, a mosque, a commercial gym, a barbershop, a **PC bang**, a public library, a Costa, **a bedroom with a headset on**, a school corridor, a football terrace, **the proposed venue**.\n\nRanking forces the definitional fight into the open. Plenary on the three most contested: the bedroom with a headset, the school corridor, the proposed venue. The school corridor remains the productive case — it satisfies most criteria and is obviously not a third place, which exposes that Oldenburg's list is necessary but not sufficient. The bedroom is the case that generates the course."},
+   artefact:{minutes:10, body:"First cards on the claim wall. Each team writes the definition it will operate with, and signs it. Revisable later, but only in writing."},
+   fallback:"",
+   readings:[
+     {id:"r0101", citation:"Oldenburg & Brissett (1982), \"The third place\", Qualitative Sociology 5(4) — full, it is short", status:"to-set"},
+     {id:"r0102", citation:"Steinkuehler & Williams (2006), JCMC 11(4) — MMOs as third places — full", status:"verified"},
+     {id:"r0103", citation:"Ducheneaut, Moore & Nickell (2007), CSCW 16 — detailed venue study", status:"verified"},
+     {id:"r0104", citation:"Ungdata, n=70,695, ages 16–18, 2021–23 — e-sports engagement (0.7% girls, 8.8% boys)", status:"unverified"}
+   ],
+   notes:"", confidenceFlags:["Ungdata e-sports figures (≈5% overall; 0.7% girls, 8.8% boys; n=70,695; ages 16–18; 2021–23) reported as published. Verify the exact citation before setting."],
+   decisionRefs:["D1","D2","D9"] },
+
+ { id:"s02", number:2, title:"Which decline?", block:"describe", lens:"",
+   question:"Which decline are we talking about — supply, use, quality, or outcome?",
+   provocation:{minutes:10, body:"One headline claim (\"third places are disappearing\") and four datasets that each support a different magnitude. Show of hands on the percentage decline, then reveal that the answer depends entirely on which thing is counted."},
+   input:{minutes:30, body:"The four-way decomposition, taught as the analytical spine of the whole course.\n\n- **Supply** — venue counts and closures. Sun, Esposito, Sagehorn, Melendez & Finlay (2025), *Health & Place*: widespread third-place closures across the US 2019–21, varying by category and by rural/urban setting.\n- **Use** — time-use data. Kannan & Veazie (2023), *SSM — Population Health*: rising social isolation and falling companionship, ATUS 2003–2020, with pre-pandemic trends already declining. Twenge & Spitzberg (2020) on adolescent in-person interaction.\n- **Quality** — commercialisation, surveillance, sorting. Harder to measure; that is the point, not an apology.\n- **Outcome** — loneliness and belonging. Klinenberg has argued publicly that there is no good evidence Americans are lonelier than ever, while simultaneously documenting collapsing face-to-face time. Both can be true, and the students must be able to say why.\n\nAdd, for this iteration, a **fifth candidate**: digital substitution. Not a fifth column on the claim wall — it is a proposed *explanation*, and this session is still description. Park it explicitly for session 3 onward. Naming it and refusing to discuss it is the cleanest demonstration of the verb discipline the course will get.\n\nThen the measurement problem itself: Finlay et al. (2026), *Alzheimer's & Dementia*, show that the geospatial datasets used to count third places vary substantially in locational accuracy, categorical validity and coverage. The dataset determines the finding."},
+   activity:{minutes:40, body:"**[HTML] Decline Lab.** Four synchronised panels — venue counts, minutes of face-to-face socialising, a constructed quality index, self-reported belonging — over 2000–2025. A definition selector lets students swing the headline figure from roughly −8% to −55% using the same underlying data. Second mode: \"build your own headline\" generates one defensible and one misleading sentence from an identical dataset; students must say which is which and why."},
+   artefact:{minutes:10, body:"Claim wall's four columns populated for the first time. Assumption register opened."},
+   fallback:"**[OFF] Four papers, four groups.** Each group takes one evidence type, twenty minutes, and presents the strongest possible case that *their* decline is the real one. Plenary adjudicates. Works nearly as well and costs nothing.",
+   readings:[
+     {id:"r0201", citation:"Sun, Esposito, Sagehorn, Melendez & Finlay (2025), Health & Place — US third-place closures 2019–21", status:"to-set"},
+     {id:"r0202", citation:"Kannan & Veazie (2023), SSM — Population Health — social isolation, ATUS 2003–2020", status:"to-set"},
+     {id:"r0203", citation:"Twenge & Spitzberg (2020) — adolescent in-person interaction", status:"to-set"},
+     {id:"r0204", citation:"Klinenberg — loneliness evidence vs collapsing face-to-face time", status:"to-set"},
+     {id:"r0205", citation:"Finlay et al. (2026), Alzheimer's & Dementia — geospatial dataset validity", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:[],
+   decisionRefs:[] },
+
+ { id:"s03", number:3, title:"Belonging without conversation", block:"explain", lens:"Psychological, part one",
+   question:"Why do humans need a room in which to be nobody in particular — and what happens when that room keeps score?",
+   provocation:{minutes:10, body:"**[OFF] The alibi test.** In pairs: five minutes of conversation with no shared task, then five minutes of conversation while playing something trivially simple together. Rate difficulty and enjoyment on a slip. Collect. The gap between the two is the design principle the entire venue rests on, and students discover it in their own bodies before they meet it in a citation."},
+   input:{minutes:30, body:"Baumeister & Leary (1995) on the need to belong as a fundamental motive. Festinger, Schachter & Back (1950) — the Westgate study, in which friendship formation was predicted by stairwell position and doorway orientation rather than by disposition. Zajonc on mere exposure; Milgram on the familiar stranger. Goffman (1963) on civil inattention — the skill of being near strangers without engaging them, which is what makes a third place restful rather than demanding.\n\nCacioppo & Hawkley: loneliness as social hypervigilance, not merely deficit. This is the session's payload, because it explains why opening a room does not fill it. A lonely adolescent entering an unfamiliar space is running threat detection, not seeking company.\n\nThen resolve session 1's failure of the conversation criterion. Either the client's space fails a core criterion of the theory it invokes, or the criterion is wrong. The second reading is the stronger one: a shared focal activity lowers the conversational demand of entry, which is precisely what an anxious fifteen-year-old needs. Gaming is a **sociable alibi**. Students who reach this themselves have done real theoretical work; do not hand it to them before the alibi test data are on the board.\n\nThe design implication is concrete and should be written on the claim wall this week: the space needs somewhere to **stop playing and still be present**, or it is a room of individuals.\n\nClose by opening the second failure — the leveller. Competitive gaming produces a visible, ranked, persistent skill hierarchy, and an equipment gradient on top of it. A teenager on a school laptop and a teenager on a 240Hz monitor are not equals in that room, and the ladder announces it publicly."},
+   activity:{minutes:40, body:"**[HTML] The Ladder.** Twenty agents, heterogeneous skill and hardware, matchmaking on or off, ranking visible or hidden. Outputs: participation retention by skill decile, and time-to-quit for the bottom quartile. Students then redesign the matchmaking to retain the bottom quartile and discover what they must give up to do it. Directly attacks Oldenburg's leveller criterion with a mechanism rather than an assertion."},
+   artefact:{minutes:10, body:"Assumption register founding entry: *\"teenagers will come if the space is open.\"* The register's canonical example of an assumption that reads as obvious and is not."},
+   fallback:"**[OFF] Ladder without ranks.** Run a class tournament twice — once with a visible leaderboard, once with hidden results and randomised pairings. Compare participation in the final rounds. Cheap, noisy, and makes the same point.",
+   readings:[
+     {id:"r0301", citation:"Baumeister & Leary (1995) — the need to belong", status:"to-set"},
+     {id:"r0302", citation:"Festinger, Schachter & Back (1950) — the Westgate study (propinquity)", status:"to-set"},
+     {id:"r0303", citation:"Zajonc — mere exposure", status:"to-set"},
+     {id:"r0304", citation:"Milgram — the familiar stranger", status:"to-set"},
+     {id:"r0305", citation:"Goffman (1963) — civil inattention", status:"to-set"},
+     {id:"r0306", citation:"Cacioppo & Hawkley — loneliness as social hypervigilance", status:"to-set"},
+     {id:"r0307", citation:"Epley & Schroeder — connecting with strangers (optional set-work; demoted from activity)", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:[],
+   decisionRefs:["D11"] },
+
+ { id:"s04", number:4, title:"Screens and the adolescent", block:"explain", lens:"Psychological, part two",
+   question:"Why teenagers specifically — and how would we know whether screens are the problem?",
+   provocation:{minutes:10, body:"\"Name every place you could legally and comfortably spend two hours, aged fifteen, without money and without an adult present.\" Silent list, two minutes. Count aloud. The number is usually one or zero."},
+   input:{minutes:30, body:"*Development (12 min).* Blakemore on social brain development in adolescence and the reorientation toward peers. Steinberg's dual-systems account and the Chein et al. finding that peer presence specifically elevates adolescent risk-taking. Self-determination theory, which in this brief becomes central rather than useful: games are engineered to deliver competence and autonomy, so **the room must supply relatedness or it adds nothing the bedroom does not**. Autonomy is the design variable adult-designed youth spaces most reliably get wrong, because a space that is supervised, programmed and evaluated is by construction low in autonomy. Scannell & Gifford (2010) on place attachment gives the vocabulary for why a space becomes *theirs*.\n\n*Methods (18 min).* Haidt (2024), *The Anxious Generation*, set against Odgers's *Nature* review and Przybylski & Orben's specification-curve work. Then ICD-11 gaming disorder set against the substantial methodological critique of that literature. The purpose is not to settle either question. It is to show students what a real methodological disagreement looks like, conducted by people with skin in it, and to equip them for the fact that the club **will** be asked about gaming disorder and screen time by parents, funders and the municipality — and will also be asked, by anyone who has read the critiques, whether the diagnosis is well founded. Students must be able to hold both without collapsing into either.\n\nTwo minutes on flow, variable reward and stopping cues: a space with no natural end to a session has a safeguarding problem before it has a closing-time problem."},
+   activity:{minutes:40, body:"**[HTML] Threshold, gaming variant.** A branching narrative of one teenager's first ninety seconds — pavement, door, threshold, first interaction — with social-anxiety modelling determining which branches are available. Three personas, run in sequence: a ranked player, a curious non-gamer, and a girl arriving alone into a room that is 90% male. The divergence in outcomes is the lesson. Cheapest build on the list; largest effect on what students recommend."},
+   artefact:{minutes:10, body:"Steel-man file opened: each team drafts the strongest case that psychology is *not* the primary explanatory lens here."},
+   fallback:"**[OFF] The autonomy audit.** Five real youth-space photographs. For each, list every decision a fifteen-year-old is permitted to make and every one that has been made for them. The ratio is usually appalling.",
+   readings:[
+     {id:"r0401", citation:"Blakemore — social brain development in adolescence", status:"to-set"},
+     {id:"r0402", citation:"Steinberg — dual-systems account; Chein et al. — peer presence and risk-taking", status:"to-set"},
+     {id:"r0403", citation:"Self-determination theory (Ryan & Deci) — competence, autonomy, relatedness", status:"to-set"},
+     {id:"r0404", citation:"Scannell & Gifford (2010) — place attachment", status:"to-set"},
+     {id:"r0405", citation:"Haidt (2024), The Anxious Generation", status:"to-set"},
+     {id:"r0406", citation:"Odgers — Nature review; Przybylski & Orben — specification-curve analysis", status:"to-set"},
+     {id:"r0407", citation:"ICD-11 gaming disorder and its methodological critique", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:[],
+   decisionRefs:[] },
+
+ { id:"s05", number:5, title:"Who pays for twenty PCs?", block:"explain", lens:"Economic, part one",
+   question:"Is a third place a public good, a club good, or a business — and what changes when the capital stock is obsolete in four years?",
+   provocation:{minutes:10, body:"\"This space will cost 400,000 NOK a year to run. Who should pay, and what does your answer commit you to?\" Four options on the board, hands up, no discussion. Keep the tally; revisit in session 13."},
+   input:{minutes:30, body:"Samuelson (1954) on public goods, then Buchanan (1965), \"An economic theory of clubs\" — excludability, congestion, optimal club size. This is the course's one genuine formal tool and it repays doing properly on a whiteboard: the marginal member confers a benefit up to a threshold and imposes a congestion cost beyond it, yielding an optimum that is neither one person nor everybody. The e-sports twist is that congestion is **hard-capped by seat count**, so the rationing question is unavoidable from day one rather than emergent.\n\nOstrom (1990) and the eight design principles, presented as a governance template to be reused in session 13. Hirschman (1970): a declining club loses its most demanding members first, which is why quality decay is self-accelerating — and in a gaming venue the most demanding members are the ranked players, whose departure is visible.\n\nThen the material specific to this brief:\n\n- **Hardware as capital with a brutal obsolescence cycle.** Twenty machines replaced every three to four years, plus peripherals, plus bandwidth, plus the fact that the machines lose function the moment a title's system requirements move. Contrast with a football pitch, which depreciates over decades. This changes the funding model entirely and students almost never anticipate it.\n- **The PC bang comparison.** Internet cafés collapsed across most of the West and persist at scale in South Korea. Candidate explanations: housing density and space per teenager, hardware cost relative to income, network effects, licensing. The best natural experiment available on whether physical gaming venues survive.\n- **The club's own economics.** E-sports for football clubs is usually a brand and audience play, not a profit centre. Ask who is really being served — and require students to make the case that this is legitimate rather than cynical before they are allowed to call it cynical."},
+   activity:{minutes:40, body:"**[HTML] Club Economics, with rig module.** Students run the space: membership fee, per-session price, opening hours, capacity, staffing. The model includes congestion costs past a threshold, fixed costs with a Baumol drift, and four teenage segments with heterogeneous willingness to pay. Optimal club size emerges from play rather than from the lecture.\n\nThe rig module adds the capital problem: a hardware budget, a three-to-four-year obsolescence curve, bandwidth costs and a maintenance function. Students choose between fewer good machines and more mediocre ones, **and must fund year four**. Most first attempts are insolvent by month thirty.\n\nSecond phase, after twenty-five minutes: remove the ability to charge anything at all. Congestion must now be solved by rationing — booking, membership caps, invitation, queueing. Every solution they invent is a political one, and the next block arrives on its own."},
+   artefact:{minutes:10, body:"Claim wall: the \"supply\" column gets its economic explanations."},
+   fallback:"**[OFF] Silent budget auction.** Fixed NOK budget, twenty candidate features, sealed team bids. Reveals preference orderings and the free-rider problem in fifteen minutes with no technology. Run this as a companion even if the build ships.",
+   readings:[
+     {id:"r0501", citation:"Samuelson (1954) — public goods", status:"to-set"},
+     {id:"r0502", citation:"Buchanan (1965), \"An economic theory of clubs\"", status:"to-set"},
+     {id:"r0503", citation:"Ostrom (1990) — eight design principles", status:"to-set"},
+     {id:"r0504", citation:"Hirschman (1970), Exit, Voice, and Loyalty", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:[],
+   decisionRefs:["D5","D6"] },
+
+ { id:"s06", number:6, title:"The market for lingering", block:"explain", lens:"Economic, part two",
+   question:"Where did the free seat go?",
+   provocation:{minutes:10, body:"The cost of a cappuccino divided by the socially acceptable maximum occupancy of a café table. Present it as a rent — kroner per hour of belonging."},
+   input:{minutes:30, body:"Commercial third places sell time indirectly through spend-per-seat norms. Baumol's cost disease as the quiet structural explanation of why staffed social space becomes relatively more expensive forever — students almost never find this themselves and it reframes closure as something other than negligence. Becker (1965) on the allocation of time: the teenage time budget as a constrained optimisation containing school, travel and part-time work. Anchor tenants and footfall externalities. And, closing the loop from session 2's parked fifth candidate, substitution toward a digital good with **near-zero marginal cost** — which is the economic statement of the client's problem.\n\nClose with non-market valuation — contingent valuation, willingness to pay — and why teenage WTP is a terrible proxy for social value."},
+   activity:{minutes:40, body:"**[OFF] The price of sitting.** Teams leave the building. Within 400 metres, find every place a fifteen-year-old could sit indoors for one hour without spending money. Photograph each. Then cost the cheapest legitimate paid alternative. Return with two numbers: free seat-hours available, and the price of one purchased seat-hour.\n\nThis produces a figure the client can use directly and is the single most reliably transformative activity in the course. Run in central London the count is usually shockingly low. Do not substitute a build for it."},
+   artefact:{minutes:10, body:"Assumption register: *\"the Norwegian equivalent of this count is different, and we do not know how.\"* Flag it for the client question set (D3)."},
+   fallback:"",
+   readings:[
+     {id:"r0601", citation:"Baumol — cost disease", status:"to-set"},
+     {id:"r0602", citation:"Becker (1965) — the allocation of time", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:[],
+   decisionRefs:["D13"] },
+
+ { id:"s07", number:7, title:"Whose space?", block:"explain", lens:"Political, part one",
+   question:"Who writes the rules of a space that looks public — and does it matter whether the space has walls?",
+   provocation:{minutes:10, body:"Read aloud, without attribution, three clauses from a privately owned public space rulebook. Ask students to place each as a shopping centre, a public park, or a private estate. They will get it wrong."},
+   input:{minutes:30, body:"Habermas (1962/1989) on the coffeehouse and the structural transformation of the public sphere, with Fraser's (1990) counterpublics critique attached immediately so the canonical account does not stand unchallenged. Sennett (1977) on the fall of public man. Lefebvre on the right to the city. Minton's *Ground Control* on the privatisation of British public space.\n\nHostile design: Rosenberger's typology, and the 2025 *Journal of Applied Youth Studies* analysis of how redesigned suburban Melbourne railway stations designed out young people through combined physical imposition, surveillance and regulation, reinforced by media discourse criminalising teenage presence.\n\nThen the extension this brief requires: **platform governance as POPS**. The rules of a Discord server are a private rulebook governing a space that presents as public, enforced by unaccountable volunteers, with no appeal. The Finnish case of a non-profit running a youth centre on a Discord server — the platformization of a youth centre — is the teaching case, because it makes governance concrete and exposes the technical-competence barrier to participation. *(Confidence: the case is real; author and date unverified — see §E.)*\n\nWhere this lands: Soukup (2006) on computer-mediated communication as a virtual third place, and the subsequent critique that Oldenburg's physical criteria transfer badly to virtual settings (Memarovic et al. 2014; McArthur & White 2016). The critique matters here because it is the strongest available argument *for* the client's proposition."},
+   activity:{minutes:40, body:"**[OFF] Split forensics.** Half the class walks one street photographing and classifying anti-sit, anti-skate, anti-linger and anti-sleep features. The other half takes an actual estate rulebook — King's Cross, Granary Square, More London — **and** the community rules of a major gaming platform, and produces a list of every behaviour permitted in one and prohibited in the other, in both directions.\n\nReconvene. The three lists together are the political lens made physical, and the platform column is the one the client has not thought about.\n\n**Optional build, tier 2. [HTML] Moderation Commons.** Ostrom's eight principles applied to a server rather than a room: students set boundaries, sanctions, monitoring and conflict resolution, then face escalating incidents. Graduated sanctions outperform bans; unmonitored spaces degrade. If built, it displaces the hostile design walk, not the rulebook forensics."},
+   artefact:{minutes:10, body:"Claim wall: the \"quality\" column, thin until now, finally fills."},
+   fallback:"",
+   readings:[
+     {id:"r0701", citation:"Habermas (1962/1989) — structural transformation of the public sphere", status:"to-set"},
+     {id:"r0702", citation:"Fraser (1990) — counterpublics critique", status:"to-set"},
+     {id:"r0703", citation:"Sennett (1977) — The Fall of Public Man", status:"to-set"},
+     {id:"r0704", citation:"Lefebvre — the right to the city", status:"to-set"},
+     {id:"r0705", citation:"Minton — Ground Control (privatisation of British public space)", status:"to-set"},
+     {id:"r0706", citation:"Rosenberger — hostile design typology", status:"to-set"},
+     {id:"r0707", citation:"Journal of Applied Youth Studies (2025) — Melbourne railway stations designing out youth", status:"to-set"},
+     {id:"r0708", citation:"Finnish non-profit youth centre on Discord — platformization case (author/date unverified)", status:"unverified"},
+     {id:"r0709", citation:"Soukup (2006) — CMC as a virtual third place; Memarovic et al. (2014); McArthur & White (2016) — the transfer critique", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:["Discord-as-third-place and the Finnish youth-centre case: real, but author names and dates unconfirmed. Check before setting.","Red Bull Gaming Sphere / London gaming venues: high sector churn and a 16+ policy per published material — confirm hours, access and age policy directly before booking."],
+   decisionRefs:["D13"] },
+
+ { id:"s08", number:8, title:"Power and the young", block:"explain", lens:"Political, part two",
+   question:"Is a youth club participation or containment — and who is excluded by an activity rather than by a door?",
+   provocation:{minutes:10, body:"\"Your recommendation will be implemented by adults, funded by adults, evaluated by adults, and used by teenagers. At which of those four points does a young person get a vote?\""},
+   input:{minutes:30, body:"Arnstein (1969) on the ladder of citizen participation, then Hart (1992) on children's participation as the operational version for this brief — manipulation, decoration and tokenism occupy the bottom three rungs and describe most real youth consultation. Coussée, Roets & De Bie (2009), \"Empowering the powerful\": youth work systematically reaches the young people who were already included. Teach this without softening; it is the necessary counterweight to client optimism.\n\nThen return to session 1's number and do not leave it. Craig, Prior and colleagues (2020), *Social Inclusion* 8(3), found stakeholders across publishers, teams and sport-for-development organisations simultaneously claiming inclusion as e-sports' defining virtue and identifying gendered toxicity as its embedded problem. Rusk & Ståhl and others characterise competitive gaming's norms as technomasculine; Witkowski on gendered presence in competitive gaming. In the Ungdata data, female e-sports players differ noticeably from non-players on almost all measured indicators, while among boys players and non-players look broadly similar — which suggests that for girls, participation is selective in a way it is not for boys.\n\nState the conclusion plainly: **on current Norwegian base rates, an e-sports space is a boys' space, by a factor of more than ten, and this is not a moderation-policy problem solvable with a code of conduct on the wall.** Whether the club treats that as a design fault or an accepted scope is the club's decision to make deliberately (D1) — but the students' job is to make sure it is made, not discovered.\n\nNordic context: universalism versus targeting, municipal responsibility for youth provision, and Ungdata as a governance instrument as much as a research one. Norwegian youth policy is unusually evidence-linked, which raises rather than lowers the stakes on what counts as evidence."},
+   activity:{minutes:40, body:"**[OFF] Stakeholder table.** Five asymmetric roles with private, conflicting mandates: the club, the municipality, the teenagers, a local business association, parents. Four rounds to agree a specification and a budget. The municipality has a statutory duty and a deficit; the business association wants footfall and no congregation; the teenagers want somewhere unsupervised.\n\nDebrief against Hart's ladder: which rung did the teenagers actually occupy in the deal that was struck?\n\n**Do not build the multiplayer version.** Paper role-play performs acceptably and the infrastructure cost is disproportionate.\n\n**Companion, 15 min if the role-play finishes early. [OFF] The girl's seat.** Redesign the space, the programming and the recruitment so the 0.7% figure could plausibly move. Constraint: teams may not simply propose a girls-only night without justifying why segregation is the right instrument. Carry the output into session 13."},
+   artefact:{minutes:10, body:"Steel-man file: the case that this is containment dressed as provision."},
+   fallback:"",
+   readings:[
+     {id:"r0801", citation:"Arnstein (1969) — ladder of citizen participation", status:"to-set"},
+     {id:"r0802", citation:"Hart (1992) — children's participation (operational ladder)", status:"to-set"},
+     {id:"r0803", citation:"Coussée, Roets & De Bie (2009), \"Empowering the powerful\"", status:"to-set"},
+     {id:"r0804", citation:"Craig, Prior et al. (2020), Social Inclusion 8(3) — inclusion vs gendered toxicity in e-sports", status:"to-set"},
+     {id:"r0805", citation:"Rusk & Ståhl — technomasculine norms; Witkowski — gendered presence in competitive gaming", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:["On current Norwegian base rates an e-sports space serves boys >10:1 — rests on the Ungdata e-sports figures; verify that citation before setting."],
+   decisionRefs:["D1","D11"] },
+
+ { id:"s09", number:9, title:"Adjudicating explanations", block:"adjudicate", lens:"",
+   question:"How would we know which lens is right?",
+   provocation:{minutes:10, body:"Three one-sentence explanations of third-place decline, one per lens, all plausible. \"Design an observation that would come out differently depending on which is true.\" Most students cannot, initially, and should feel that."},
+   input:{minutes:30, body:"A method, not a literature. Causal mapping: nodes, directed edges, sign and estimated strength. Then diagnostic reasoning — the move from *my explanation is consistent with the evidence* to *my explanation predicts something the others do not*. Introduce the key assumptions check and analysis of competing hypotheses as formal techniques.\n\nWorked example: if third-place decline is driven primarily by commercial rent (economic), by digital substitution (psychological), or by the privatisation of public space (political), the three predict different patterns across venue types, across countries with different property regimes, and across age cohorts. Those differential predictions are testable, and the PC bang case from session 5 is a live instance."},
+   activity:{minutes:40, body:"**[OFF] Competing hypotheses matrix.** Hypotheses as columns, available evidence as rows, cells marked consistent / inconsistent / non-diagnostic. The discipline is that evidence consistent with *everything* is worthless, and students always begin with a matrix full of it.\n\nSecond half: each team designs one diagnostic test that could be run, in principle and with real data, to discriminate between two lenses. Ten minutes, then present."},
+   artefact:{minutes:10, body:"Claim wall reorganised: cards move to \"diagnostic evidence\" or are demoted."},
+   fallback:"",
+   readings:[],
+   notes:"", confidenceFlags:[],
+   decisionRefs:[] },
+
+ { id:"s10", number:10, title:"What actually works", block:"adjudicate", lens:"",
+   question:"Does building the thing help?",
+   provocation:{minutes:15, body:"**Provocation and forecast (15).** Before any input, every student records a probabilistic prediction in the forecast log:\n\n> A new municipal youth club opens in a comparable Nordic urban district. Two years later, has young people's satisfaction with their local environment improved detectably relative to comparison districts? Give a probability.\n\nCollect before proceeding. No discussion first. This is not negotiable — the reveal is worthless if the numbers are not already on paper."},
+   input:{minutes:40, body:"**Input (25).** Coalter (2007), \"Sports clubs, social capital and social regeneration: 'ill-defined interventions with hard to follow outcomes'?\" — the title is the argument. Coalter (2013) and Coalter & Theeboom (2025) on sport-for-development's evidentiary problems. Then the evaluation machinery: selection into attendance, regression to the mean, secular trend, deadweight, attribution, and why pre-post designs on voluntary programmes almost always show gains.\n\nAdd the escalation specific to this brief: **e-sports-for-development inherits every evidential weakness of sport-for-development while being younger and less evaluated.** Pair with the capabilities-based e-sports-for-development model in the *Journal of Electronic Gaming and Esports* (2023), which is explicitly untested — a rare chance to show students a framework that openly asks to be falsified.\n\n**The reveal (15).** A difference-in-differences study of the Fubiak leisure club, established at Furuset in Alna district, Oslo, in 2016, using Ung i Oslo cross-sections from 2015 and 2018, found no significant difference in the development of young people's satisfaction with their local environment between Alna and the rest of Oslo — neither among youth in general nor within socio-economic subgroups (*Nordic Journal of Urban Studies* 4(1)). The paper explicitly notes how few studies of leisure-club impact exist.\n\nScore the forecasts on the spot. Then sit with it: the students are about to recommend building something whose closest evaluated analogue produced nothing measurable.\n\nBalance it honestly, in the same breath. Kleppang & Skille (2022), *IJERPH* 19(17): 10769, using Ungdata 2017–19, find that lower participation in organised sports and unorganised physical activity is associated with higher odds of depressive symptoms — but the direction of causation is exactly what a cross-sectional design cannot establish. Zahnow (2024) finds social infrastructure access associated with cohesion and wellbeing in a nationally representative Australian sample. Association is abundant; identification is scarce."},
+   activity:{minutes:35, body:"**[HTML] Evaluation Trap.** Students design and \"run\" an evaluation of a new youth club. They see a large, satisfying pre-post improvement. Then they unlock, one at a time, selection into attendance, regression to the mean, the secular trend, and finally the difference-in-differences estimate. The headline gain evaporates in stages. Ends by returning their own Brier score from the forecast."},
+   artefact:{minutes:0, body:"Forecast log scored. Assumption register gains its most important row: *\"we assume this intervention has an effect.\"*"},
+   fallback:"",
+   readings:[
+     {id:"r1001", citation:"Coalter (2007) — \"ill-defined interventions with hard to follow outcomes\"", status:"to-set"},
+     {id:"r1002", citation:"Coalter (2013); Coalter & Theeboom (2025) — sport-for-development evidence", status:"to-set"},
+     {id:"r1003", citation:"Journal of Electronic Gaming and Esports (2023) — capabilities-based e-sports-for-development model (explicitly untested)", status:"to-set"},
+     {id:"r1004", citation:"Fubiak/Furuset difference-in-differences study, Nordic Journal of Urban Studies 4(1)", status:"unverified"},
+     {id:"r1005", citation:"Kleppang & Skille (2022), IJERPH 19(17):10769 — participation and depressive symptoms", status:"to-set"},
+     {id:"r1006", citation:"Zahnow (2024) — social infrastructure, cohesion and wellbeing", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:["Fubiak/Furuset difference-in-differences finding: accurate as to design, data and result; author names unverified."],
+   decisionRefs:["D10"] },
+
+ { id:"s11", number:11, title:"Northern Norway, online", block:"intervene", lens:"",
+   question:"What does this specific context change?",
+   provocation:{minutes:10, body:"A photograph of Tromsø at noon in December. \"Design a youth programme for this.\""},
+   input:{minutes:30, body:"*Geography and demography.* Latitude around 69°N, polar night from roughly late November to mid-January, extreme seasonal swing in daylight and temperature, and the transport consequences for a fifteen-year-old without a car. Northern Norway holds under a tenth of Norway's population across nearly a third of its land area, with sustained depopulation pressure; Finnmark and Nord-Troms are designated an action zone with tax relief and student loan write-offs explicitly aimed at retention. *(Verify figures against Statistics Norway before slides — see §E.)*\n\nReframe accordingly: teenage retention in the north is a **regional policy** problem as much as a wellbeing one, which is the argument most likely to interest the club's funders.\n\n*The double-edged case.* In a region of low density and long winters, distance is the binding constraint on physical sociability and the internet is the *existing solution*. The case for a physical gaming venue in the north is therefore simultaneously **stronger** than in a dense southern city — it competes not with an alternative social life but with none — and **weaker**, because the online option is already established, free, and has better hardware. Students must argue both sides before choosing.\n\n*Infrastructure and institutions.* Bandwidth and latency to Nordic game servers; transport after school in winter darkness; the school-week rhythm; municipal responsibility for youth provision; the framework conditions for leisure clubs reviewed by NTNU Social Research for the Ministry of Children and Families (2023); participation-fee barriers and the fritidskort pilots; Norwegian upper-secondary e-sports programmes; Ungdata as the available local evidence base. Whether e-sports counts as sport for Norwegian public funding purposes is **not verified — do not assert either way in class** (D7).\n\n*Psychology of season.* Leibowitz and Vittersø on positive wintertime mindset in Tromsø — framing the polar night as an opportunity rather than an ordeal is associated with better wellbeing. *(Verify citation; roughly 80% confident on substance.)* If it holds it is a design instruction, not a curiosity: the space should be **of** the winter, not a refuge from it.\n\nIf Sámi young people fall within the catchment, this is where that is addressed — seriously, with a guest voice if at all possible, and not as an exotic footnote (D8)."},
+   activity:{minutes:40, body:"**[HTML] Polar Night Planner, e-sports variant.** Seasonal demand model: daylight hours by week at 69°N, temperature, school calendar, transport availability, darkness-related attendance elasticity. Students schedule a year of programming against a fixed budget. The naive plan front-loads summer and dies in January; the good plan does the opposite.\n\nAdded axis for this brief: for each week, **what fraction of the target group's gaming would have happened anyway, at home?** The tool must make displacement visible, because the client's business case depends on it — and it hands students the concept that session 13's keystone build then formalises.\n\n**Second activity, non-negotiable, 15 min inside the artefact slot. Write the client question set.** Students draft the questions they would ask catchment teenagers — gamers and non-gamers — if they could. This is the input to D3 and, if the club agrees, the material for session 12."},
+   artefact:{minutes:10, body:"Assumption register: the \"what we cannot know from London\" column gets its heaviest session."},
+   fallback:"**[OFF]** Paper year-planner on a fixed budget with a printed daylight-and-temperature table. Loses the elasticity model, keeps the lesson.",
+   readings:[
+     {id:"r1101", citation:"NTNU Social Research for the Ministry of Children and Families (2023) — leisure-club framework conditions", status:"to-set"},
+     {id:"r1102", citation:"Leibowitz and Vittersø — positive wintertime mindset in Tromsø", status:"unverified"},
+     {id:"r1103", citation:"Statistics Norway — Northern Norway demographics and action-zone figures (secondary reporting)", status:"unverified"}
+   ],
+   notes:"", confidenceFlags:[
+     "Northern Norway demographic and action-zone figures: secondary reporting; verify against Statistics Norway before slides.",
+     "Leibowitz and Vittersø on Tromsø wintertime mindset: ~80% confident on substance, less on publication details.",
+     "Whether e-sports qualifies as sport for Norwegian public funding: not verified. Do not assert either way in class (D7)."
+   ],
+   decisionRefs:["D3","D7","D8","D11"] },
+
+ { id:"s12", number:12, title:"Listening", block:"intervene", lens:"",
+   question:"What do the people who would use it actually say?",
+   provocation:{minutes:5, body:"*Access position, stated plainly.* Students do not have access to teenagers in the client's catchment. Catchment-specific voice is recoverable only through the club (D3): the club administers the session-11 question set locally and returns recordings or transcripts. A teenage panel is still available in London and is worth having on its own terms, but it cannot supply Norwegian base rates and must not be allowed to imply that it can.\n\n**Provocation (5).** Read out three verbatim lines from published Ungdata material. \"Who said this, and what would you have designed differently if you had heard it first?\""},
+   input:{minutes:20, body:"Structured secondary listening as a method: what published survey findings can and cannot tell you; the difference between what a respondent ticks and what a respondent means; practitioner accounts as evidence with a known bias direction. Then the recruitment problem — Coussée et al. from session 8 applies to *listening* as much as to provision, and the teenagers most easily reached are the least informative about non-attendance."},
+   activity:{minutes:55, body:"**Activity A (30). [OFF] The empty chair.** One student plays a Norwegian fifteen-year-old who has never attended anything organised in their life. Teams pitch to the chair. The chair's only job is to explain why they would not come. **Rotate so every student occupies the chair once** — the shift in what students recommend after sitting in it is the most reliable attitude change in the course.\n\n**Activity B (25). [OFF] Interview synthesis.** Raw material → themes → design implications, done explicitly and visibly rather than intuitively. The discipline: every design implication must be traceable to a specific thing someone said, and the trace must be written down. If local material has been returned, it is used here; if not, published practitioner accounts and recorded interviews substitute."},
+   artefact:{minutes:10, body:"Steel-man file updated against what was actually heard, and a written note in the assumption register of every claim that survived *only* because nobody in the catchment was there to contradict it. That note goes into the deliverable verbatim."},
+   fallback:"",
+   readings:[
+     {id:"r1201", citation:"Ungdata — published survey material (verbatim lines and findings)", status:"to-set"},
+     {id:"r1202", citation:"Coussée, Roets & De Bie (2009) — the recruitment problem applied to listening", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:[],
+   decisionRefs:["D3","D11","D14"] },
+
+ { id:"s13", number:13, title:"Options", block:"intervene", lens:"",
+   question:"What could be built, at what cost, and does it add contact or move it?",
+   provocation:{minutes:10, body:"\"You have one building, one budget and one year. Name the single decision that matters most.\" Collect, keep, revisit in session 15."},
+   input:{minutes:25, body:"Options appraisal as a form: a do-nothing baseline, three to five real alternatives, costs and benefits stated in the same units where possible and honestly separated where not. The do-nothing baseline is not a formality — given session 10, it is a live contender.\n\nOstrom's design principles reintroduced as a governance specification: boundaries, congruence with local conditions, collective-choice arrangements, monitoring, graduated sanctions, conflict resolution, recognised rights to organise, nested enterprises. A youth space with no answer to *who decides the rules and who enforces them* is not yet designed.\n\nPhysical design evidence: Whyte on movable seating, edges, triangulation and the sociability of small spaces; Jacobs on eyes on the street; Festinger's propinquity findings applied to circulation and thresholds.\n\n**Design brief constraints, issued this session and binding on the deliverable.** Every option must specify:\n- a **non-play space** — somewhere to stop playing and still be present (session 3);\n- its position on the **rationing** question (session 5);\n- its position on the **ranking and hardware gradient** (session 3);\n- what it does about the **0.7% figure**, including \"nothing, and here is why that is an acceptable scope\" as a permitted answer if argued (session 8, D1);\n- a **year-four hardware replacement** line (session 5);\n- what it would take to **detect** whether it worked (session 10)."},
+   activity:{minutes:45, body:"**[HTML] Displacement Lab.** *The keystone build for this brief.* Students set capacity, hours and programming, then watch two counters: total social contact hours in the town, and contact hours **at the venue**. The naive design moves the second up and leaves the first flat — the teenagers who come are the ones already gaming together. Sliders for outreach intensity, activity mix and threshold friction let students find configurations that add contact rather than relocate it.\n\nThis tool exists to make substitution visible and is deliberately withheld until the intervene block: it answers *does the venue add anything*, which is an intervention question. Running it earlier would breach the verb order.\n\n**Companion, [OFF], 20 min, mandatory. Hardware Fermi.** Catchment population → eligible teenagers → realistic penetration rate → attendance per session → staffing ratio → **cost per contact hour**. Then compare that number with a football pitch, a library and a bus pass. The comparison is the argument.\n\n**Deferred to tier 2. [HTML] Room Designer.** Grid layout, thresholds, seating, sightlines, agents with three motives — be seen, avoid being seen, do something — scored on dwell time and cross-group contact, with Whyte's findings encoded. High value, but Displacement Lab and the Fermi carry this session, and paper layouts are an adequate substitute."},
+   artefact:{minutes:10, body:"First draft options table on the wall, costed, with the do-nothing baseline in the first row."},
+   fallback:"",
+   readings:[
+     {id:"r1301", citation:"Ostrom — eight design principles (governance specification)", status:"to-set"},
+     {id:"r1302", citation:"Whyte — movable seating, edges, triangulation, small spaces", status:"to-set"},
+     {id:"r1303", citation:"Jacobs — eyes on the street", status:"to-set"},
+     {id:"r1304", citation:"Festinger — propinquity applied to circulation and thresholds", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:[],
+   decisionRefs:["D1","D4","D5","D6","D7","D9","D10","D12"] },
+
+ { id:"s14", number:14, title:"Red team", block:"intervene", lens:"",
+   question:"What is wrong with our answer?",
+   provocation:{minutes:5, body:"\"It is 2029. The space has closed. Write the first sentence of the news story.\""},
+   input:{minutes:15, body:"Pre-mortem method (Klein): assume failure has occurred, then generate causes. It outperforms risk-listing because it removes the social cost of pessimism. Then the protocol: teams under attack do not defend."},
+   activity:{minutes:60, body:"**[OFF] Structured adversarial review.** Rotating, three rounds of twenty minutes. Each proposal is attacked by a team assigned a specific lens:\n\n- **Psychological red team** — will anyone cross the threshold; what happens to the bottom quartile of the ladder; where do you stop playing and still belong.\n- **Economic red team** — who pays in year three when the capital grant is spent; what happens in year four when the machines age out; what is your cost per contact hour and what does it compare with.\n- **Political red team** — who was excluded by the design rather than by the door; who decides the rules and who enforces them; what rung of Hart's ladder did the teenagers occupy.\n\nRules: the proposing team may ask clarifying questions only. No defending. All criticism written down verbatim.\n\nFinal ten minutes: each team identifies the single criticism it cannot answer, and states what it will do about it."},
+   artefact:{minutes:10, body:"Steel-man file closed and submitted. Assumption register finalised into the register that accompanies the deliverable."},
+   fallback:"",
+   readings:[
+     {id:"r1401", citation:"Klein — the pre-mortem method", status:"to-set"}
+   ],
+   notes:"", confidenceFlags:[],
+   decisionRefs:[] },
+
+ { id:"s15", number:15, title:"The pitch", block:"intervene", lens:"",
+   question:"Does it survive contact with the client?",
+   provocation:{minutes:0, body:"**Format.** Client present, in person or by video, with at least one other adversarial questioner — a practitioner guest is ideal (D2, D11)."},
+   input:{minutes:0, body:""},
+   activity:{minutes:70, body:"**Structure (70).** Ten minutes per team: five presenting, five under questioning. Every deliverable must contain, and every pitch must state:\n\n1. The causal mechanism claimed.\n2. The assumed magnitude of the effect, with a stated basis.\n3. What evidence would falsify it.\n4. **What the club must find out locally that this course could not establish from London.**\n\nPoint four is what clients value most and what students most want to omit. Given the access constraint, it is also this cohort's largest single contribution, and it should be scored accordingly."},
+   artefact:{minutes:20, body:"**Close (20).** Forecast log returned with Brier scores, including the session-10 forecast and any interim ones. Revisit session 13's \"single decision that matters most\" — did any team's answer survive?\n\nThen the course's actual lesson, stated plainly: the three lenses do not combine into one answer. They constrain each other. A recommendation that is psychologically sound, economically unsustainable and politically impossible is not a partial success."},
+   fallback:"",
+   readings:[],
+   notes:"", confidenceFlags:[],
+   decisionRefs:["D2","D11","D12"] }
+];
+
+const DECISIONS_SEED = [
+ {id:"D1", title:"Gender scope", body:"Gender scope: does the club accept a facility that on current base rates serves boys by more than 10:1, or is moving the 0.7% a stated objective?", status:"open", owner:"client", blocks:["s01","s08","s13"], answer:"", answeredOn:null},
+ {id:"D2", title:"Client presence (S1 & S15)", body:"Client presence in S1 and S15: in person, live video, or recorded? If recorded, S1 needs a Q&A substitute.", status:"open", owner:"client", blocks:["s01","s15"], answer:"", answeredOn:null},
+ {id:"D3", title:"Local question-set administration", body:"Will the club administer the students' question set to catchment teenagers (gamers and non-gamers) between S11 and S12 and return transcripts? Consent, safeguarding and data handling owner must be named.", status:"open", owner:"both", blocks:["s11","s12"], answer:"", answeredOn:null},
+ {id:"D4", title:"Catchment definition", body:"Catchment definition: municipality or municipalities, population aged 13–19, travel times, inventory of existing provision.", status:"open", owner:"client", blocks:["s13"], answer:"", answeredOn:null},
+ {id:"D5", title:"Budget envelope & shape", body:"Budget envelope and its shape: capital vs revenue split, grant term, whether year-4 hardware replacement is in scope.", status:"open", owner:"client", blocks:["s05","s13"], answer:"", answeredOn:null},
+ {id:"D6", title:"Site & seat-count ceiling", body:"Site: existing building, part of the stadium, or new build? Seat-count ceiling.", status:"open", owner:"client", blocks:["s05","s13"], answer:"", answeredOn:null},
+ {id:"D7", title:"E-sports as sport for funding", body:"Does e-sports qualify as sport for Norwegian public funding? Currently unverified; the club is better placed to answer than we are.", status:"open", owner:"client", blocks:["s11","s13"], answer:"", answeredOn:null},
+ {id:"D8", title:"Sámi young people in catchment", body:"Are Sámi young people in the catchment, and who advises on how this is handled?", status:"open", owner:"client", blocks:["s11"], answer:"", answeredOn:null},
+ {id:"D9", title:"'Do not build' as a legitimate output", body:"Will the club accept \"do not build the dedicated venue\" as a legitimate output? Best answered before session 1, not after session 15.", status:"open", owner:"client", blocks:["s13"], answer:"", answeredOn:null},
+ {id:"D10", title:"Existing club data sharing", body:"What existing data will the club share — attendance, membership, prior programme evaluation?", status:"open", owner:"client", blocks:["s10","s13"], answer:"", answeredOn:null},
+ {id:"D11", title:"Guest speaker profiles", body:"Which guest speaker profiles can the club supply from its own network?", status:"open", owner:"client", blocks:["s03","s08","s11","s12","s15"], answer:"", answeredOn:null},
+ {id:"D12", title:"Deliverable audience", body:"Deliverable audience: who receives the options appraisal — club board, municipality, funder? Determines register and format.", status:"open", owner:"client", blocks:["s13","s15"], answer:"", answeredOn:null},
+ {id:"D13", title:"Field trip commitments", body:"Field trip commitments: which Tier 1 visits are booked, and by when.", status:"open", owner:"hult", blocks:["s06","s07"], answer:"", answeredOn:null},
+ {id:"D14", title:"Safeguarding sign-off (London panel)", body:"Safeguarding sign-off for any teenage panel in London.", status:"open", owner:"hult", blocks:["s12"], answer:"", answeredOn:null}
+];
+
+function chk15(prefix){ const a=[]; for(let i=1;i<=15;i++) a.push({id:prefix+i, label:"Session "+i, done:false}); return a; }
+
+const ASSETS_SEED = [
+ // slides, one per session
+ {id:"a01", sessionId:"s01", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a02", sessionId:"s02", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a03", sessionId:"s03", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a04", sessionId:"s04", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a05", sessionId:"s05", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a06", sessionId:"s06", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a07", sessionId:"s07", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a08", sessionId:"s08", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a09", sessionId:"s09", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a10", sessionId:"s10", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a11", sessionId:"s11", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a12", sessionId:"s12", type:"slides", title:"Slides", status:"blocked", tier:null, blockedBy:["D3","D14"]},
+ {id:"a13", sessionId:"s13", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a14", sessionId:"s14", type:"slides", title:"Slides", status:"todo", tier:null},
+ {id:"a15", sessionId:"s15", type:"slides", title:"Slides", status:"todo", tier:null},
+ // html builds
+ {id:"a16", sessionId:"s02", type:"html", title:"Decline Lab", status:"todo", tier:1},
+ {id:"a17", sessionId:"s03", type:"html", title:"The Ladder", status:"todo", tier:2},
+ {id:"a18", sessionId:"s04", type:"html", title:"Threshold, gaming variant", status:"todo", tier:1},
+ {id:"a19", sessionId:"s05", type:"html", title:"Club Economics + rig module", status:"todo", tier:1},
+ {id:"a20", sessionId:"s07", type:"html", title:"Moderation Commons", status:"todo", tier:2},
+ {id:"a21", sessionId:"s10", type:"html", title:"Evaluation Trap", status:"todo", tier:1},
+ {id:"a22", sessionId:"s11", type:"html", title:"Polar Night Planner", status:"todo", tier:2},
+ {id:"a23", sessionId:"s13", type:"html", title:"Displacement Lab", status:"todo", tier:1},
+ {id:"a24", sessionId:"s13", type:"html", title:"Room Designer", status:"todo", tier:2},
+ // print materials for material-heavy offline activities
+ {id:"a25", sessionId:"s01", type:"print", title:"Oldenburg card sort, gaming variant", status:"todo", tier:null},
+ {id:"a26", sessionId:"s06", type:"print", title:"The price of sitting — recording sheet", status:"todo", tier:null},
+ {id:"a27", sessionId:"s07", type:"print", title:"Split forensics — estate & platform rulebook packs", status:"todo", tier:null},
+ {id:"a28", sessionId:"s08", type:"print", title:"Stakeholder table — five mandate briefs", status:"todo", tier:null},
+ {id:"a29", sessionId:"s09", type:"print", title:"Competing hypotheses matrix", status:"todo", tier:null},
+ {id:"a30", sessionId:"s14", type:"print", title:"Structured adversarial review — lens cards & capture sheets", status:"todo", tier:null},
+ // speakers
+ {id:"a31", sessionId:"s03", type:"speaker", title:"Guest speaker", status:"blocked", tier:null, blockedBy:["D11"]},
+ {id:"a32", sessionId:"s08", type:"speaker", title:"Guest speaker — woman in e-sports moderation", status:"blocked", tier:null, blockedBy:["D11"]},
+ {id:"a33", sessionId:"s11", type:"speaker", title:"Guest speaker — Norwegian municipal youth / Sámi voice", status:"blocked", tier:null, blockedBy:["D11"]},
+ {id:"a34", sessionId:"s12", type:"speaker", title:"Teenage panel (London)", status:"blocked", tier:null, blockedBy:["D11","D3","D14"]},
+ {id:"a35", sessionId:"s15", type:"speaker", title:"Client + adversarial practitioner guest", status:"blocked", tier:null, blockedBy:["D11"]},
+ // trips
+ {id:"a36", sessionId:"s06", type:"trip", title:"The price of sitting — neighbourhood walk", status:"blocked", tier:null, blockedBy:["D13"]},
+ {id:"a37", sessionId:"s07", type:"trip", title:"Hostile design & POPS street forensics", status:"blocked", tier:null, blockedBy:["D13"]},
+ {id:"a38", sessionId:null, type:"trip", title:"Gaming venue visit (Red Bull Gaming Sphere / London)", status:"blocked", tier:null, blockedBy:["D13"]},
+ // course-level admin
+ {id:"a39", sessionId:null, type:"admin", title:"Safeguarding sign-off", status:"blocked", tier:null, blockedBy:["D14"]},
+ {id:"a40", sessionId:null, type:"admin", title:"Client liaison", status:"todo", tier:null},
+ {id:"a41", sessionId:null, type:"admin", title:"Room booking", status:"todo", tier:null},
+ {id:"a42", sessionId:null, type:"admin", title:"Claim wall (standing artefact)", status:"todo", tier:null, checklist:chk15("cw"), notes:"One card per session minimum. Four columns: supply, use, quality, outcome."},
+ {id:"a43", sessionId:null, type:"admin", title:"Assumption register (standing artefact)", status:"todo", tier:null, checklist:chk15("ar"), notes:"One row per assumption; columns for \"how would we test this?\" and \"what we cannot know from London\"."},
+ {id:"a44", sessionId:null, type:"admin", title:"Forecast log (standing artefact)", status:"todo", tier:null, checklist:chk15("fl"), notes:"Probabilistic predictions recorded before reveals. Brier-scored in session 15."},
+ {id:"a45", sessionId:null, type:"admin", title:"Steel-man file (standing artefact)", status:"todo", tier:null, checklist:chk15("sm"), notes:"Each team's best case against its own emerging position. Closed and submitted in session 14."},
+ // course-level assessment
+ {id:"a46", sessionId:null, type:"assessment", title:"Deliverable brief (options appraisal)", status:"todo", tier:null},
+ {id:"a47", sessionId:null, type:"assessment", title:"Marking rubric", status:"todo", tier:null}
+];
+
+const SEED = {
+  schemaVersion:1,
+  meta:{
+    courseTitle:"Social Phenomena Challenge — The Third Place, E-Sports Brief",
+    cohort:"BSc Psychology, Economics and Politics · Hult London",
+    startDate:null,
+    sessionsPerWeek:1,
+    lastExport:null
+  },
+  sessions: SESSIONS_SEED,
+  assets: ASSETS_SEED,
+  decisions: DECISIONS_SEED
+};
+
+/* =================================================================
+   Constants
+   ================================================================= */
+const SCHEMA_VERSION = 1;
+const LS_DATA = "courseTracker.v1";
+const LS_UI = "courseTracker.ui.v1";
+
+const STATUSES = [
+  {id:"not-needed", label:"Not needed"},
+  {id:"blocked",    label:"Blocked"},
+  {id:"todo",       label:"To do"},
+  {id:"specced",    label:"Specced"},
+  {id:"in-progress",label:"In progress"},
+  {id:"built",      label:"Built"},
+  {id:"tested",     label:"Tested"}
+];
+const TYPES = [
+  {id:"slides",    tag:"deck",   label:"Slides"},
+  {id:"html",      tag:"build",  label:"Build"},
+  {id:"print",     tag:"print",  label:"Print"},
+  {id:"speaker",   tag:"guest",  label:"Speaker"},
+  {id:"trip",      tag:"trip",   label:"Trip"},
+  {id:"reading",   tag:"read",   label:"Reading"},
+  {id:"assessment",tag:"assess", label:"Assessment"},
+  {id:"admin",     tag:"admin",  label:"Admin"}
+];
+const BLOCKS = [
+  {id:"describe", label:"Describe"},
+  {id:"explain", label:"Explain"},
+  {id:"adjudicate", label:"Adjudicate"},
+  {id:"intervene", label:"Intervene"}
+];
+const READING_STATUS = ["to-set","set","verified","unverified"];
+const typeMeta = id => TYPES.find(t=>t.id===id) || {tag:id,label:id};
+const statusMeta = id => STATUSES.find(s=>s.id===id) || {label:id};
+
+/* =================================================================
+   State + persistence
+   ================================================================= */
+let state, ui, saveTimer=null, undoSnapshot=null, toastTimer=null;
+
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+
+function defaultUI(){
+  return { view:"board", theme:"auto", currentSession:"s01",
+    filters:{blocks:[],types:[],tiers:[],owners:[],blockedOnly:false,overdueOnly:false,unassignedOnly:false,search:""},
+    collapsed:{}, menuOpen:false };
+}
+
+function loadUI(){
+  try{ const raw=localStorage.getItem(LS_UI); if(raw){ return Object.assign(defaultUI(), JSON.parse(raw)); } }catch(e){}
+  return defaultUI();
+}
+function saveUI(){ try{ localStorage.setItem(LS_UI, JSON.stringify(ui)); }catch(e){} }
+
+function normalize(d){
+  d.meta = Object.assign({courseTitle:"",cohort:"",startDate:null,sessionsPerWeek:1,lastExport:null}, d.meta||{});
+  d.sessions = d.sessions||[]; d.assets = d.assets||[]; d.decisions = d.decisions||[];
+  d.assets.forEach(a=>{
+    if(!("blockedBy" in a)) a.blockedBy=[];
+    if(!("checklist" in a)) a.checklist=[];
+    if(!("notes" in a)) a.notes="";
+    if(!("owner" in a)) a.owner="";
+    if(!("due" in a)) a.due=null;
+    if(!("effort" in a)) a.effort=null;
+    if(!("tier" in a)) a.tier=null;
+    if(!("updatedAt" in a)) a.updatedAt=NOW_SEED;
+  });
+  d.sessions.forEach(s=>{
+    ["provocation","input","activity","artefact"].forEach(k=>{ if(!s[k]) s[k]={minutes:0,body:""}; });
+    if(!s.readings) s.readings=[];
+    if(!s.confidenceFlags) s.confidenceFlags=[];
+    if(!s.decisionRefs) s.decisionRefs=[];
+    if(!("notes" in s)) s.notes="";
+    if(!("lens" in s)) s.lens="";
+  });
+  return d;
+}
+
+function loadData(){
+  let raw;
+  try{ raw = localStorage.getItem(LS_DATA); }catch(e){ raw=null; }
+  if(!raw){ state = normalize(clone(SEED)); saveData(true); return; }
+  let parsed=null;
+  try{ parsed = JSON.parse(raw); }
+  catch(e){
+    // corrupt — never discard; keep the raw blob then seed
+    backupRaw(raw); state = normalize(clone(SEED)); saveData(true); return;
+  }
+  if(!parsed || parsed.schemaVersion !== SCHEMA_VERSION){
+    backupRaw(raw);
+    parsed = migrate(parsed);
+  }
+  state = normalize(parsed);
+}
+function backupRaw(raw){
+  try{ localStorage.setItem("courseTracker.backup."+Date.now(), raw); }catch(e){}
+}
+function migrate(d){
+  if(!d || typeof d!=="object") return clone(SEED);
+  // Only v1 exists; future migrations chain here. Preserve unknown fields.
+  d.schemaVersion = SCHEMA_VERSION;
+  return d;
+}
+function saveData(immediate){
+  if(saveTimer){ clearTimeout(saveTimer); saveTimer=null; }
+  const doWrite=()=>{ try{ localStorage.setItem(LS_DATA, JSON.stringify(state)); }catch(e){ console.error("save failed",e); } };
+  if(immediate){ doWrite(); return; }
+  saveTimer = setTimeout(doWrite, 400);
+}
+
+/* =================================================================
+   Undo (single level)
+   ================================================================= */
+function captureUndo(label){ undoSnapshot = {label, data:clone(state)}; }
+function commitUndo(){ if(undoSnapshot) showToast(undoSnapshot.label, ()=>{
+  state = normalize(undoSnapshot.data); undoSnapshot=null; saveData(true); render();
+}); }
+function showToast(label, onUndo){
+  const t=document.getElementById("toast");
+  t.innerHTML="";
+  const span=document.createElement("span"); span.textContent=label; t.appendChild(span);
+  if(onUndo){ const b=document.createElement("button"); b.textContent="Undo"; b.onclick=()=>{ onUndo(); hideToast(); }; t.appendChild(b); }
+  t.classList.add("show");
+  if(toastTimer) clearTimeout(toastTimer);
+  toastTimer=setTimeout(hideToast, 8000);
+}
+function hideToast(){ document.getElementById("toast").classList.remove("show"); }
+
+/* =================================================================
+   Helpers
+   ================================================================= */
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function el(tag, attrs, children){
+  const e=document.createElement(tag);
+  if(attrs) for(const k in attrs){
+    if(k==="class") e.className=attrs[k];
+    else if(k==="html") e.innerHTML=attrs[k];
+    else if(k==="text") e.textContent=attrs[k];
+    else if(k.startsWith("on") && typeof attrs[k]==="function") e.addEventListener(k.slice(2), attrs[k]);
+    else if(k==="dataset"){ for(const dk in attrs[k]) e.dataset[dk]=attrs[k][dk]; }
+    else if(attrs[k]!=null && attrs[k]!==false) e.setAttribute(k, attrs[k]);
+  }
+  if(children!=null){ (Array.isArray(children)?children:[children]).forEach(c=>{ if(c==null)return; e.appendChild(typeof c==="string"?document.createTextNode(c):c); }); }
+  return e;
+}
+function sessionById(id){ return state.sessions.find(s=>s.id===id); }
+function assetsForSession(id){ return state.assets.filter(a=>a.sessionId===id); }
+function segMinutes(s){ return ["provocation","input","activity","artefact"].reduce((n,k)=>n+(Number(s[k].minutes)||0),0); }
+function initials(name){ if(!name) return ""; return name.trim().split(/\s+/).slice(0,2).map(w=>w[0]).join("").toUpperCase(); }
+function todayISO(){ const d=new Date(); return d.toISOString().slice(0,10); }
+function isOverdue(due){ return due && due < todayISO(); }
+function nextAssetId(){
+  let max=0; state.assets.forEach(a=>{ const m=/^a(\d+)$/.exec(a.id); if(m) max=Math.max(max,+m[1]); });
+  return "a"+String(max+1).padStart(2,"0");
+}
+function nextId(prefix){ return prefix + Math.random().toString(36).slice(2,8); }
+function touch(a){ a.updatedAt = new Date().toISOString(); }
+
+// minimal markdown: **bold**, *italic*, "- " bullets, "> " blockquote
+function mdInline(s){
+  return esc(s)
+    .replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>")
+    .replace(/\*([^*\n]+)\*/g,"<em>$1</em>");
+}
+function mdRender(raw){
+  if(!raw) return "";
+  const lines=String(raw).split("\n"); let out=""; let inList=false;
+  for(const line of lines){
+    if(/^\s*-\s+/.test(line)){ if(!inList){out+="<ul>";inList=true;} out+="<li>"+mdInline(line.replace(/^\s*-\s+/,""))+"</li>"; continue; }
+    if(inList){ out+="</ul>"; inList=false; }
+    if(/^\s*>\s?/.test(line)){ out+="<blockquote>"+mdInline(line.replace(/^\s*>\s?/,""))+"</blockquote>"; continue; }
+    if(line.trim()===""){ continue; }
+    out+="<p>"+mdInline(line)+"</p>";
+  }
+  if(inList) out+="</ul>";
+  return out;
+}
+
+/* =================================================================
+   Root render
+   ================================================================= */
+const root=()=>document.getElementById("root");
+
+function render(){
+  applyTheme();
+  const r=root(); r.innerHTML="";
+  r.appendChild(renderTopbar());
+  const v=el("div",{class:"view view-"+ui.view});
+  if(ui.view==="board") v.appendChild(renderBoard());
+  else if(ui.view==="matrix") v.appendChild(renderMatrix());
+  else if(ui.view==="sessions") v.appendChild(renderSessions());
+  else if(ui.view==="decisions") v.appendChild(renderDecisions());
+  r.appendChild(v);
+  saveUI();
+}
+
+function applyTheme(){
+  const rootEl=document.documentElement;
+  if(ui.theme==="auto") rootEl.removeAttribute("data-theme");
+  else rootEl.setAttribute("data-theme", ui.theme);
+}
+
+/* ---------- topbar ---------- */
+function renderTopbar(){
+  const bar=el("div",{class:"topbar"});
+  bar.appendChild(el("div",{class:"brand"},[
+    el("b",{text:"Course Build Tracker"}),
+    el("span",{text: state.meta.cohort || "15 × 90 minutes"})
+  ]));
+  const nav=el("div",{class:"nav"});
+  [["board","Board","1"],["matrix","Matrix","2"],["sessions","Sessions","3"],["decisions","Decisions","4"]].forEach(([id,label,key])=>{
+    nav.appendChild(el("button",{class: ui.view===id?"active":"", onclick:()=>{ setView(id); }},[
+      el("span",{class:"txt",text:label}), el("span",{class:"k",text:key})
+    ]));
+  });
+  bar.appendChild(nav);
+  bar.appendChild(el("div",{class:"spacer"}));
+
+  const sb=el("div",{class:"searchbox"});
+  sb.appendChild(el("span",{class:"mag",text:"⌕"}));
+  const inp=el("input",{id:"search", type:"text", placeholder:"Search  /", value:ui.filters.search,
+    oninput:(e)=>{ ui.filters.search=e.target.value; if(ui.view!=="board") setView("board"); else refreshBoard(); saveUI(); }});
+  sb.appendChild(inp);
+  bar.appendChild(sb);
+
+  bar.appendChild(menu());
+  return bar;
+}
+
+function menu(){
+  const wrap=el("div",{class:"menu-wrap"});
+  const btn=el("button",{class:"iconbtn", onclick:(e)=>{ e.stopPropagation(); ui.menuOpen=!ui.menuOpen; render(); }},"⋯ Menu");
+  wrap.appendChild(btn);
+  if(ui.menuOpen){
+    const m=el("div",{class:"menu", onclick:e=>e.stopPropagation()});
+    m.appendChild(el("div",{class:"lbl",text:"Theme"}));
+    const seg=el("div",{class:"seg"});
+    [["auto","Auto"],["light","Light"],["dark","Dark"]].forEach(([v,l])=>{
+      seg.appendChild(el("button",{class: ui.theme===v?"on":"", onclick:()=>{ ui.theme=v; render(); }}, l));
+    });
+    m.appendChild(seg);
+    m.appendChild(el("div",{class:"sep"}));
+    m.appendChild(mItem("Export JSON backup", "⌘S", ()=>{ exportJSON(); }));
+    m.appendChild(mItem("Import JSON…", "", ()=>{ document.getElementById("importfile").click(); }));
+    m.appendChild(el("div",{class:"sep"}));
+    m.appendChild(mItem("Export course as Markdown", "", ()=>{ exportMarkdown(); }));
+    m.appendChild(mItem("Export decisions as Markdown", "", ()=>{ exportDecisionsMarkdown(); }));
+    m.appendChild(el("div",{class:"sep"}));
+    m.appendChild(mItem("Print matrix (A3)", "", ()=>{ ui.menuOpen=false; setView("matrix"); setTimeout(()=>window.print(),80); }));
+    m.appendChild(el("div",{class:"sep"}));
+    const reset=el("button",{onclick:(e)=>{
+      if(reset.dataset.arm){ resetToSeed(); }
+      else { reset.dataset.arm="1"; reset.querySelector("span").textContent="Confirm reset to seed"; setTimeout(()=>{ if(reset.querySelector){ delete reset.dataset.arm; const s=reset.querySelector("span"); if(s) s.textContent="Reset to seed data…"; } },3000); }
+      e.stopPropagation();
+    }},[el("span",{text:"Reset to seed data…"})]);
+    m.appendChild(reset);
+    wrap.appendChild(m);
+  }
+  return wrap;
+}
+function mItem(label, key, fn){
+  return el("button",{onclick:()=>{ ui.menuOpen=false; fn(); }},[
+    el("span",{text:label}), key?el("span",{class:"k mono",text:key,style:"color:var(--faint);font-size:10px"}):null
+  ]);
+}
+
+function setView(v){ ui.view=v; ui.menuOpen=false; render(); if(v==="board"){} }
+
+/* =================================================================
+   BOARD
+   ================================================================= */
+function ownerList(){
+  const set=new Set(); state.assets.forEach(a=>{ if(a.owner) set.add(a.owner); });
+  return [...set].sort();
+}
+function assetMatches(a){
+  const f=ui.filters;
+  const s = a.sessionId?sessionById(a.sessionId):null;
+  if(f.blocks.length){ if(!s || !f.blocks.includes(s.block)) return false; }
+  if(f.types.length && !f.types.includes(a.type)) return false;
+  if(f.tiers.length && !f.tiers.includes(String(a.tier))) return false;
+  if(f.owners.length && !f.owners.includes(a.owner)) return false;
+  if(f.blockedOnly && a.status!=="blocked") return false;
+  if(f.overdueOnly && !isOverdue(a.due)) return false;
+  if(f.unassignedOnly && a.owner) return false;
+  if(f.search){
+    const q=f.search.toLowerCase();
+    const hay=(a.title+" "+(a.notes||"")).toLowerCase();
+    if(!hay.includes(q)) return false;
+  }
+  return true;
+}
+function anyFilterActive(){
+  const f=ui.filters;
+  return f.blocks.length||f.types.length||f.tiers.length||f.owners.length||f.blockedOnly||f.overdueOnly||f.unassignedOnly||f.search;
+}
+
+function renderBoard(){
+  const wrap=el("div",{});
+  wrap.appendChild(renderFilters());
+  const board=el("div",{class:"board", id:"board"});
+  STATUSES.forEach(st=>board.appendChild(renderColumn(st)));
+  wrap.appendChild(board);
+  return wrap;
+}
+function refreshBoard(){
+  const old=document.getElementById("board"); if(!old) return;
+  const nb=el("div",{class:"board", id:"board"});
+  STATUSES.forEach(st=>nb.appendChild(renderColumn(st)));
+  old.replaceWith(nb);
+  // refresh counts in filters not needed
+}
+
+function renderFilters(){
+  const f=ui.filters;
+  const bar=el("div",{class:"filters"});
+  // block
+  const g1=el("div",{class:"fgroup"},[el("span",{class:"fglabel",text:"Block"})]);
+  BLOCKS.forEach(b=>g1.appendChild(el("button",{class:"pill"+(f.blocks.includes(b.id)?" on":""), onclick:()=>toggleF("blocks",b.id)}, b.label)));
+  bar.appendChild(g1); bar.appendChild(el("div",{class:"fdiv"}));
+  // type
+  const g2=el("div",{class:"fgroup"},[el("span",{class:"fglabel",text:"Type"})]);
+  TYPES.forEach(t=>g2.appendChild(el("button",{class:"pill"+(f.types.includes(t.id)?" on":""), onclick:()=>toggleF("types",t.id)}, t.label)));
+  bar.appendChild(g2); bar.appendChild(el("div",{class:"fdiv"}));
+  // tier
+  const g3=el("div",{class:"fgroup"},[el("span",{class:"fglabel",text:"Tier"})]);
+  ["1","2","3","null"].forEach(t=>g3.appendChild(el("button",{class:"pill"+(f.tiers.includes(t)?" on":""), onclick:()=>toggleF("tiers",t)}, t==="null"?"—":t)));
+  bar.appendChild(g3); bar.appendChild(el("div",{class:"fdiv"}));
+  // owner
+  const owners=ownerList();
+  if(owners.length){
+    const g4=el("div",{class:"fgroup"},[el("span",{class:"fglabel",text:"Owner"})]);
+    owners.forEach(o=>g4.appendChild(el("button",{class:"pill"+(f.owners.includes(o)?" on":""), onclick:()=>toggleF("owners",o)}, o)));
+    bar.appendChild(g4); bar.appendChild(el("div",{class:"fdiv"}));
+  }
+  // flags
+  const g5=el("div",{class:"fgroup"});
+  g5.appendChild(el("button",{class:"pill"+(f.blockedOnly?" on":""), onclick:()=>toggleBool("blockedOnly")}, "Blocked only"));
+  g5.appendChild(el("button",{class:"pill"+(f.overdueOnly?" on":""), onclick:()=>toggleBool("overdueOnly")}, "Overdue only"));
+  g5.appendChild(el("button",{class:"pill"+(f.unassignedOnly?" on":""), onclick:()=>toggleBool("unassignedOnly")}, "Unassigned only"));
+  bar.appendChild(g5);
+  if(anyFilterActive()) bar.appendChild(el("button",{class:"clearf", onclick:clearFilters}, "Clear filters"));
+  return bar;
+}
+function toggleF(key,val){ const arr=ui.filters[key]; const i=arr.indexOf(val); if(i<0)arr.push(val); else arr.splice(i,1); saveUI(); render(); }
+function toggleBool(key){ ui.filters[key]=!ui.filters[key]; saveUI(); render(); }
+function clearFilters(){ ui.filters=defaultUI().filters; const sb=document.getElementById("search"); if(sb)sb.value=""; saveUI(); render(); }
+
+function renderColumn(st){
+  const collapsed=!!ui.collapsed[st.id];
+  const all=state.assets.filter(a=>a.status===st.id);
+  const shown=all.filter(assetMatches);
+  const col=el("div",{class:"col"+(collapsed?" collapsed":""), dataset:{status:st.id}});
+  col.addEventListener("dragover",e=>{ e.preventDefault(); col.classList.add("dragover"); });
+  col.addEventListener("dragleave",()=>col.classList.remove("dragover"));
+  col.addEventListener("drop",e=>{ e.preventDefault(); col.classList.remove("dragover"); const id=e.dataTransfer.getData("text/plain"); moveAsset(id, st.id); });
+
+  const head=el("div",{class:"colhead", onclick:()=>{ ui.collapsed[st.id]=!collapsed; saveUI(); render(); }});
+  head.appendChild(el("span",{class:"dot", style:"background:var(--st-"+st.id+"-bg);box-shadow:0 0 0 1px var(--st-"+st.id+"-br) inset"}));
+  head.appendChild(el("span",{class:"name",text:st.label}));
+  const cnt = anyFilterActive() ? (shown.length+" of "+all.length) : String(all.length);
+  head.appendChild(el("span",{class:"cnt mono",text:cnt}));
+  col.appendChild(head);
+
+  if(!collapsed){
+    const list=el("div",{class:"collist"});
+    shown.forEach(a=>list.appendChild(renderCard(a)));
+    col.appendChild(list);
+  }
+  return col;
+}
+
+function renderCard(a){
+  const c=el("div",{class:"card", draggable:"true", dataset:{id:a.id}});
+  c.addEventListener("dragstart",e=>{ e.dataTransfer.setData("text/plain",a.id); e.dataTransfer.effectAllowed="move"; c.classList.add("dragging"); });
+  c.addEventListener("dragend",()=>c.classList.remove("dragging"));
+  c.addEventListener("click",()=>openAsset(a.id));
+
+  const r1=el("div",{class:"r1"});
+  r1.appendChild(el("span",{class:"ttag",text:typeMeta(a.type).tag}));
+  const s=a.sessionId?sessionById(a.sessionId):null;
+  r1.appendChild(el("span",{class:"snum"+(s?"":" course"), text: s?("S"+s.number):"course"}));
+  if(a.tier) r1.appendChild(el("span",{class:"badge tier"+a.tier, text:"T"+a.tier}));
+  c.appendChild(r1);
+
+  c.appendChild(el("div",{class:"title",text:a.title}));
+
+  const r2=el("div",{class:"r2"});
+  if(a.owner) r2.appendChild(el("span",{class:"init", title:a.owner, text:initials(a.owner)}));
+  if(a.due) r2.appendChild(el("span",{class:"badge"+(isOverdue(a.due)?" over":""), text:a.due.slice(5)}));
+  if(a.checklist && a.checklist.length){
+    const done=a.checklist.filter(i=>i.done).length;
+    r2.appendChild(el("span",{class:"prog", text:done+"/"+a.checklist.length}));
+  }
+  if(r2.childNodes.length) c.appendChild(r2);
+
+  if(a.status==="blocked" && a.blockedBy && a.blockedBy.length){
+    const blk=el("div",{class:"blk"});
+    a.blockedBy.forEach(b=>blk.appendChild(el("span",{class:"blkchip",text:b})));
+    c.appendChild(blk);
+  }
+  return c;
+}
+
+function moveAsset(id, status){
+  const a=state.assets.find(x=>x.id===id); if(!a || a.status===status) return;
+  a.status=status; touch(a); saveData(); render();
+}
+
+/* =================================================================
+   MATRIX
+   ================================================================= */
+function renderMatrix(){
+  const wrap=el("div",{});
+  const bar=el("div",{class:"printbar no-print"});
+  bar.appendChild(el("div",{class:"muted",style:"font-size:var(--fs-sm)"},"Rows are sessions, columns are asset types. Click a chip to edit; click a row to open the session. Empty cells add an asset of that type."));
+  bar.appendChild(el("button",{class:"iconbtn", onclick:()=>window.print()},"⎙ Print A3"));
+  wrap.appendChild(bar);
+
+  const mw=el("div",{class:"matwrap"});
+  const table=el("table",{class:"matrix"});
+  // head
+  const thead=el("thead"); const hr=el("tr");
+  hr.appendChild(el("th",{class:"seshead",text:"Session"}));
+  TYPES.forEach(t=>hr.appendChild(el("th",{text:t.label})));
+  hr.appendChild(el("th",{text:"Built / total"}));
+  thead.appendChild(hr); table.appendChild(thead);
+
+  const tbody=el("tbody");
+  const rows = state.sessions.slice().sort((a,b)=>a.number-b.number);
+  rows.forEach(s=>tbody.appendChild(matrixRow(s)));
+  // course-level row
+  const courseAssets=state.assets.filter(a=>!a.sessionId);
+  if(courseAssets.length) tbody.appendChild(matrixRow(null));
+  table.appendChild(tbody);
+
+  // footer per-type totals
+  const tfoot=el("tfoot"); const fr=el("tr");
+  fr.appendChild(el("td",{class:"sescell",text:"Per-type built / total"}));
+  TYPES.forEach(t=>{
+    const list=state.assets.filter(a=>a.type===t.id);
+    const built=list.filter(a=>a.status==="built"||a.status==="tested").length;
+    fr.appendChild(el("td",{text: list.length?(built+" / "+list.length):"—"}));
+  });
+  const allBuilt=state.assets.filter(a=>a.status==="built"||a.status==="tested").length;
+  fr.appendChild(el("td",{text: allBuilt+" / "+state.assets.length}));
+  tfoot.appendChild(fr); table.appendChild(tfoot);
+
+  mw.appendChild(table); wrap.appendChild(mw);
+  return wrap;
+}
+
+function matrixRow(s){
+  const tr=el("tr");
+  const isCourse = s===null;
+  const sc=el("td",{class:"sescell"});
+  if(isCourse){
+    sc.appendChild(el("div",{class:"snhead"},[ el("span",{class:"n",text:"—"}), el("span",{class:"t",text:"Course-level (no session)"}) ]));
+  } else {
+    const sh=el("div",{class:"snhead", onclick:()=>{ ui.currentSession=s.id; setView("sessions"); }});
+    sh.appendChild(el("span",{class:"n",text:s.number}));
+    sh.appendChild(el("span",{class:"t",text:s.title}));
+    sc.appendChild(sh);
+    const meta=el("div",{class:"meta"});
+    meta.appendChild(el("span",{class:"blocktag",text:s.block}));
+    const mins=segMinutes(s);
+    if(mins!==90) meta.appendChild(el("span",{class:"mwarn", title:"Segments sum to "+mins+" min, not 90", text:mins+"m"}));
+    sc.appendChild(meta);
+  }
+  tr.appendChild(sc);
+
+  const list = isCourse ? state.assets.filter(a=>!a.sessionId) : assetsForSession(s.id);
+  TYPES.forEach(t=>{
+    const cell=el("td",{class:"matcell"});
+    const items=list.filter(a=>a.type===t.id);
+    if(items.length){
+      const box=el("div",{class:"cellchips"});
+      items.forEach(a=>{
+        const chip=el("span",{class:"chip", dataset:{st:a.status}, title:a.title+" · "+statusMeta(a.status).label, onclick:()=>openAsset(a.id)},
+          [ el("span",{class:"minichip", style:"background:var(--st-"+a.status+"-fg);opacity:.85"}), a.tier?("T"+a.tier):typeMeta(a.type).tag ]);
+        box.appendChild(chip);
+      });
+      cell.appendChild(box);
+    } else if(!isCourse){
+      cell.appendChild(el("button",{class:"emptycell", title:"Add "+t.label+" for session "+s.number, onclick:()=>quickAddAsset(s.id, t.id)}, "+"));
+    }
+    tr.appendChild(cell);
+  });
+
+  const built=list.filter(a=>a.status==="built"||a.status==="tested").length;
+  tr.appendChild(el("td",{class:"donecell", text: list.length?(built+" / "+list.length):"—"}));
+  return tr;
+}
+
+function quickAddAsset(sessionId, type){
+  const s=sessionById(sessionId);
+  const a={id:nextAssetId(), sessionId, type, title: typeMeta(type).label+" — "+(s?s.title:""), status:"todo", tier:null, owner:"", due:null, effort:null, blockedBy:[], checklist:[], notes:"", updatedAt:new Date().toISOString()};
+  state.assets.push(a); saveData(); render(); openAsset(a.id);
+}
+
+/* =================================================================
+   SESSIONS
+   ================================================================= */
+function renderSessions(){
+  const layout=el("div",{class:"sesslayout"});
+  // rail
+  const rail=el("div",{class:"railwrap"});
+  BLOCKS.forEach(b=>{
+    const grp=el("div",{class:"railgroup"});
+    grp.appendChild(el("div",{class:"gh",text:b.label}));
+    state.sessions.filter(s=>s.block===b.id).sort((a,b2)=>a.number-b2.number).forEach(s=>{
+      grp.appendChild(el("button",{class:"railitem"+(ui.currentSession===s.id?" active":""), onclick:()=>{ ui.currentSession=s.id; render(); }},[
+        el("span",{class:"rn mono",text:s.number}),
+        el("span",{class:"rt",text:s.title})
+      ]));
+    });
+    rail.appendChild(grp);
+  });
+  layout.appendChild(rail);
+  layout.appendChild(renderSessionPanel(sessionById(ui.currentSession)||state.sessions[0]));
+  return layout;
+}
+
+function renderSessionPanel(s){
+  const p=el("div",{class:"spanel"});
+  // title
+  p.appendChild(el("input",{class:"titleedit", type:"text", value:s.title, onchange:(e)=>{ s.title=e.target.value; saveData(); }}));
+  // sub: number, block, lens, minutes
+  const sub=el("div",{class:"sub"});
+  sub.appendChild(el("span",{class:"mono",text:"Session "+s.number}));
+  const blockSel=el("select",{class:"metaedit", onchange:(e)=>{ s.block=e.target.value; saveData(); render(); }});
+  BLOCKS.forEach(b=>blockSel.appendChild(el("option",{value:b.id, selected:s.block===b.id?"selected":null},b.label)));
+  sub.appendChild(blockSel);
+  sub.appendChild(el("input",{class:"metaedit", type:"text", placeholder:"lens (e.g. Psychological, part one)", value:s.lens, style:"min-width:230px", onchange:(e)=>{ s.lens=e.target.value; saveData(); }}));
+  const mins=segMinutes(s);
+  const mwarn=el("span",{class: mins!==90?"mwarn":"mono muted", title:"Sum of the four segment minutes", text:"Σ "+mins+" min"+(mins!==90?" ≠ 90":"")});
+  sub.appendChild(mwarn);
+  const copyBtn=el("button",{class:"iconbtn", style:"margin-left:auto;padding:4px 9px", onclick:()=>copySessionMarkdown(s)},"⧉ Copy markdown");
+  sub.appendChild(copyBtn);
+  p.appendChild(sub);
+
+  // driving question
+  const qf=el("div",{class:"field"});
+  qf.appendChild(el("div",{class:"flabel"},"Driving question"));
+  qf.appendChild(editable(()=>s.question, v=>{ s.question=v; }, {placeholder:"the session's driving question"}));
+  p.appendChild(qf);
+
+  // assets strip
+  const astrip=el("div",{class:"strip"});
+  astrip.appendChild(el("div",{class:"sh",text:"Session assets"}));
+  const chips=el("div",{class:"assetchips"});
+  assetsForSession(s.id).forEach(a=>{
+    const ac=el("div",{class:"assetchip"});
+    ac.appendChild(el("span",{class:"ttag",text:typeMeta(a.type).tag}));
+    ac.appendChild(el("span",{class:"an",text:a.title, onclick:()=>openAsset(a.id)}));
+    const sel=el("select",{onchange:(e)=>{ a.status=e.target.value; touch(a); saveData(); }});
+    STATUSES.forEach(st=>sel.appendChild(el("option",{value:st.id, selected:a.status===st.id?"selected":null},st.label)));
+    ac.appendChild(sel);
+    chips.appendChild(ac);
+  });
+  const addSel=el("select",{class:"addbtn", onchange:(e)=>{ if(e.target.value){ quickAddAsset(s.id, e.target.value); } }});
+  addSel.appendChild(el("option",{value:"",selected:"selected"},"+ add asset"));
+  TYPES.forEach(t=>addSel.appendChild(el("option",{value:t.id},t.label)));
+  chips.appendChild(addSel);
+  astrip.appendChild(chips);
+  p.appendChild(astrip);
+
+  // decisions blocking this session
+  const decRefs = s.decisionRefs.map(id=>state.decisions.find(d=>d.id===id)).filter(Boolean);
+  if(decRefs.length){
+    const dstrip=el("div",{class:"strip"});
+    dstrip.appendChild(el("div",{class:"sh",text:"Decisions referenced by this session"}));
+    decRefs.forEach(d=>{
+      const row=el("div",{class:"decref"});
+      row.appendChild(el("span",{class:"did",text:d.id}));
+      row.appendChild(el("span",{style:"flex:1",text:d.title}));
+      row.appendChild(el("span",{class:"chip", dataset:{st: d.status==="answered"?"tested":(d.status==="open"?"blocked":"todo")}, text:d.status}));
+      dstrip.appendChild(row);
+    });
+    p.appendChild(dstrip);
+  }
+
+  // segment fields
+  [["provocation","Provocation"],["input","Input"],["activity","Activity"],["artefact","Artefact"]].forEach(([key,label])=>{
+    const f=el("div",{class:"field"});
+    const lab=el("div",{class:"flabel"},[ el("span",{text:label}) ]);
+    const mins=el("span",{class:"mins"});
+    mins.appendChild(el("span",{text:"min"}));
+    mins.appendChild(el("input",{type:"number", min:"0", value:s[key].minutes, onchange:(e)=>{ s[key].minutes=Number(e.target.value)||0; saveData(); render(); }}));
+    lab.appendChild(mins);
+    f.appendChild(lab);
+    f.appendChild(editable(()=>s[key].body, v=>{ s[key].body=v; }, {placeholder:"—"}));
+    p.appendChild(f);
+  });
+
+  // fallback
+  const ff=el("div",{class:"field"});
+  ff.appendChild(el("div",{class:"flabel"},"Offline fallback"));
+  ff.appendChild(editable(()=>s.fallback, v=>{ s.fallback=v; }, {placeholder:"offline substitute if a build is not ready"}));
+  p.appendChild(ff);
+
+  // readings
+  const rf=el("div",{class:"field"});
+  rf.appendChild(el("div",{class:"flabel"},"Readings"));
+  const ul=el("ul",{class:"readings"});
+  s.readings.forEach((r,idx)=>ul.appendChild(renderReading(s,r,idx)));
+  rf.appendChild(ul);
+  rf.appendChild(el("button",{class:"linkbtn addrow", onclick:()=>{ s.readings.push({id:nextId("r"), citation:"", status:"to-set"}); saveData(); render(); }},"+ add reading"));
+  p.appendChild(rf);
+
+  // confidence flags
+  const cf=el("div",{class:"field"});
+  cf.appendChild(el("div",{class:"flabel"},"Confidence flags — verify before setting"));
+  const cul=el("ul",{class:"confflags"});
+  s.confidenceFlags.forEach((flag,idx)=>{
+    cul.appendChild(el("li",{class:"confflag"},[
+      el("span",{text:"⚑"}),
+      el("span",{style:"flex:1",text:flag}),
+      el("button",{class:"cf-x", title:"Remove flag", onclick:()=>{ s.confidenceFlags.splice(idx,1); saveData(); render(); }},"×")
+    ]));
+  });
+  cf.appendChild(cul);
+  cf.appendChild(el("button",{class:"linkbtn", onclick:()=>{ const t=prompt("New confidence flag"); if(t){ s.confidenceFlags.push(t); saveData(); render(); } }},"+ add flag"));
+  p.appendChild(cf);
+
+  // notes
+  const nf=el("div",{class:"field"});
+  nf.appendChild(el("div",{class:"flabel"},"Notes"));
+  nf.appendChild(editable(()=>s.notes, v=>{ s.notes=v; }, {placeholder:"private notes"}));
+  p.appendChild(nf);
+
+  return p;
+}
+
+function renderReading(s, r, idx){
+  const li=el("li",{class:"reading"});
+  const cite=el("div",{class:"cite"});
+  cite.appendChild(el("input",{type:"text", value:r.citation, placeholder:"citation", onchange:(e)=>{ r.citation=e.target.value; saveData(); }}));
+  li.appendChild(cite);
+  if(r.status==="unverified") li.appendChild(el("span",{class:"unverified", text:"⚠ unverified"}));
+  const sel=el("select",{onchange:(e)=>{ r.status=e.target.value; saveData(); render(); }});
+  READING_STATUS.forEach(st=>sel.appendChild(el("option",{value:st, selected:r.status===st?"selected":null},st)));
+  li.appendChild(sel);
+  li.appendChild(el("button",{class:"minibtn", title:"Move up", disabled: idx===0?"disabled":null, onclick:()=>{ if(idx>0){ const a=s.readings; [a[idx-1],a[idx]]=[a[idx],a[idx-1]]; saveData(); render(); } }},"↑"));
+  li.appendChild(el("button",{class:"minibtn", title:"Move down", disabled: idx===s.readings.length-1?"disabled":null, onclick:()=>{ const a=s.readings; if(idx<a.length-1){ [a[idx+1],a[idx]]=[a[idx],a[idx+1]]; saveData(); render(); } }},"↓"));
+  li.appendChild(el("button",{class:"minibtn", title:"Delete reading", onclick:()=>{ s.readings.splice(idx,1); saveData(); render(); }},"×"));
+  return li;
+}
+
+/* click-to-edit markdown field: renders markdown, edits raw */
+function editable(getVal, setVal, opts){
+  opts=opts||{};
+  const val=getVal()||"";
+  const disp=el("div",{class:"editable"+(val?"":" empty"), html: val?mdRender(val):esc(opts.placeholder||"—")});
+  disp.addEventListener("click",()=>{
+    const ta=el("textarea",{class:"edit"});
+    ta.value=getVal()||"";
+    disp.replaceWith(ta);
+    autoGrow(ta); ta.focus();
+    ta.addEventListener("input",()=>autoGrow(ta));
+    const commit=()=>{
+      const old=getVal()||""; const nv=ta.value;
+      if(old!==nv){
+        if(old!=="" && nv===""){ captureUndo("Field cleared"); }
+        setVal(nv); saveData();
+        if(old!=="" && nv===""){ commitUndo(); }
+      }
+      const nd=el("div",{class:"editable"+(nv?"":" empty"), html: nv?mdRender(nv):esc(opts.placeholder||"—")});
+      nd.addEventListener("click",()=>{});
+      ta.replaceWith(nd);
+      // rebind by re-rendering only this: simplest is to re-run editable
+      nd.replaceWith(editable(getVal,setVal,opts));
+    };
+    ta.addEventListener("blur",commit);
+  });
+  return disp;
+}
+function autoGrow(ta){ ta.style.height="auto"; ta.style.height=(ta.scrollHeight+2)+"px"; }
+
+/* =================================================================
+   DECISIONS
+   ================================================================= */
+let decFilter={owner:"", status:""};
+function renderDecisions(){
+  const wrap=el("div",{});
+  const bar=el("div",{class:"filters"});
+  bar.appendChild(el("span",{class:"fglabel",text:"Owner"}));
+  ["","client","hult","both"].forEach(o=>bar.appendChild(el("button",{class:"pill"+(decFilter.owner===o?" on":""), onclick:()=>{ decFilter.owner=o; render(); }}, o||"all")));
+  bar.appendChild(el("div",{class:"fdiv"}));
+  bar.appendChild(el("span",{class:"fglabel",text:"Status"}));
+  ["","open","answered","deferred","moot"].forEach(o=>bar.appendChild(el("button",{class:"pill"+(decFilter.status===o?" on":""), onclick:()=>{ decFilter.status=o; render(); }}, o||"all")));
+  bar.appendChild(el("button",{class:"iconbtn", style:"margin-left:auto", onclick:exportDecisionsMarkdown},"⧉ Export agenda (MD)"));
+  wrap.appendChild(bar);
+
+  const table=el("table",{class:"dtable"});
+  const thead=el("thead"); const hr=el("tr");
+  ["", "Decision","Owner","Status","Blocks","Answer"].forEach(h=>hr.appendChild(el("th",{text:h})));
+  thead.appendChild(hr); table.appendChild(thead);
+  const tb=el("tbody");
+  state.decisions.filter(d=> (!decFilter.owner||d.owner===decFilter.owner) && (!decFilter.status||d.status===decFilter.status))
+    .forEach(d=>tb.appendChild(decRow(d)));
+  table.appendChild(tb);
+  wrap.appendChild(table);
+  return wrap;
+}
+function blockedByDecision(id){ return state.assets.filter(a=>a.status==="blocked" && (a.blockedBy||[]).includes(id)); }
+function decRow(d){
+  const tr=el("tr");
+  tr.appendChild(el("td",{class:"did",text:d.id}));
+  tr.appendChild(el("td",{},[ el("div",{class:"dtitle",text:d.title}), el("div",{class:"dbody",text:d.body}) ]));
+  const ownSel=el("select",{onchange:(e)=>{ d.owner=e.target.value; saveData(); }});
+  ["client","hult","both"].forEach(o=>ownSel.appendChild(el("option",{value:o, selected:d.owner===o?"selected":null},o)));
+  tr.appendChild(el("td",{},ownSel));
+  const stSel=el("select",{onchange:(e)=>{ changeDecisionStatus(d, e.target.value); }});
+  ["open","answered","deferred","moot"].forEach(o=>stSel.appendChild(el("option",{value:o, selected:d.status===o?"selected":null},o)));
+  tr.appendChild(el("td",{},stSel));
+  const blk=blockedByDecision(d.id);
+  tr.appendChild(el("td",{class:"blkcount",text: blk.length?(blk.length+" blocked"):"—"}));
+  const ans=el("td");
+  const ta=el("textarea",{class:"answer", placeholder: d.status==="answered"?"answer":"—", value:d.answer, onchange:(e)=>{ d.answer=e.target.value; saveData(); }});
+  ta.value=d.answer||"";
+  ans.appendChild(ta);
+  if(d.answeredOn) ans.appendChild(el("div",{class:"mono faint",style:"font-size:10px;margin-top:3px",text:"answered "+d.answeredOn}));
+  tr.appendChild(ans);
+  return tr;
+}
+function changeDecisionStatus(d, status){
+  const was=d.status; d.status=status;
+  if(status==="answered"){
+    d.answeredOn=todayISO();
+    const blk=blockedByDecision(d.id);
+    if(blk.length){
+      const list=blk.map(a=>{ const s=a.sessionId?("S"+sessionById(a.sessionId).number+" · "):""; return "• "+s+a.title; }).join("\n");
+      // non-modal: use toast-style confirm via window.confirm is a modal — spec forbids modal *confirms* in app chrome, but this is an explicit prompt the spec asks for.
+      const ok=confirm("Mark "+d.id+" answered.\n\nThese "+blk.length+" asset(s) are blocked by "+d.id+":\n\n"+list+"\n\nMove them out of Blocked now?\n(Assets still blocked by another decision stay blocked.)");
+      if(ok){
+        captureUndo("Unblocked "+blk.length+" asset(s)");
+        blk.forEach(a=>{
+          a.blockedBy=(a.blockedBy||[]).filter(x=>x!==d.id);
+          if(a.blockedBy.length===0){ a.status="todo"; }
+          touch(a);
+        });
+        saveData(); render(); commitUndo(); return;
+      }
+    }
+  } else if(was==="answered" && status!=="answered"){
+    d.answeredOn=null;
+  }
+  saveData(); render();
+}
+
+/* =================================================================
+   Asset detail slide-over
+   ================================================================= */
+let openAssetId=null, delArmed=false, delTimer=null;
+function openAsset(id){
+  openAssetId=id; delArmed=false;
+  const a=state.assets.find(x=>x.id===id); if(!a) return;
+  const so=document.getElementById("slideover");
+  so.innerHTML="";
+  const head=el("div",{class:"sohead"});
+  head.appendChild(el("span",{class:"ttag",text:typeMeta(a.type).tag}));
+  head.appendChild(el("span",{class:"ttl",text:"Asset"}));
+  head.appendChild(el("button",{class:"iconbtn", style:"margin-left:auto", onclick:closeAsset},"Esc ✕"));
+  so.appendChild(head);
+
+  const body=el("div",{class:"sobody"});
+  body.appendChild(soField("Title", el("input",{type:"text", value:a.title, oninput:(e)=>{ a.title=e.target.value; touch(a); saveData(); syncCardTitle(a); }})));
+
+  const typeSel=el("select",{onchange:(e)=>{ a.type=e.target.value; touch(a); saveData(); render(); }});
+  TYPES.forEach(t=>typeSel.appendChild(el("option",{value:t.id, selected:a.type===t.id?"selected":null},t.label)));
+  const sesSel=el("select",{onchange:(e)=>{ a.sessionId=e.target.value||null; touch(a); saveData(); render(); }});
+  sesSel.appendChild(el("option",{value:"", selected:a.sessionId?null:"selected"},"— course-level —"));
+  state.sessions.forEach(s=>sesSel.appendChild(el("option",{value:s.id, selected:a.sessionId===s.id?"selected":null},"S"+s.number+" "+s.title)));
+  const row1=el("div",{class:"sorow"},[ soField("Type",typeSel), soField("Session",sesSel) ]);
+  body.appendChild(row1);
+
+  const statSel=el("select",{onchange:(e)=>{ a.status=e.target.value; touch(a); saveData(); render(); }});
+  STATUSES.forEach(st=>statSel.appendChild(el("option",{value:st.id, selected:a.status===st.id?"selected":null},st.label)));
+  const tierSel=el("select",{onchange:(e)=>{ a.tier = e.target.value===""?null:Number(e.target.value); touch(a); saveData(); render(); }});
+  [["","—"],["1","Tier 1"],["2","Tier 2"],["3","Tier 3"]].forEach(([v,l])=>tierSel.appendChild(el("option",{value:v, selected:String(a.tier==null?"":a.tier)===v?"selected":null},l)));
+  body.appendChild(el("div",{class:"sorow"},[ soField("Status",statSel), soField("Tier",tierSel) ]));
+
+  body.appendChild(el("div",{class:"sorow"},[
+    soField("Owner", el("input",{type:"text", value:a.owner||"", placeholder:"initials or name", oninput:(e)=>{ a.owner=e.target.value; touch(a); saveData(); }})),
+    soField("Due", el("input",{type:"date", value:a.due||"", onchange:(e)=>{ a.due=e.target.value||null; touch(a); saveData(); render(); }}))
+  ]));
+
+  const effSel=el("select",{onchange:(e)=>{ a.effort=e.target.value===""?null:Number(e.target.value); touch(a); saveData(); }});
+  [["","—"],["1","1"],["2","2"],["3","3"],["4","4"],["5","5"]].forEach(([v,l])=>effSel.appendChild(el("option",{value:v, selected:String(a.effort==null?"":a.effort)===v?"selected":null},l)));
+  body.appendChild(soField("Effort (1–5)", effSel));
+
+  // blockedBy picker
+  const bpWrap=el("div",{class:"blkpick"});
+  const targets=[...state.decisions.map(d=>({id:d.id,label:d.id})), ...state.assets.filter(x=>x.id!==a.id).map(x=>({id:x.id,label:x.title.slice(0,14)}))];
+  // decisions first for compactness
+  state.decisions.forEach(d=>{
+    const on=(a.blockedBy||[]).includes(d.id);
+    bpWrap.appendChild(el("button",{class:"blkopt"+(on?" on":""), title:d.title, onclick:()=>{ toggleBlockedBy(a,d.id); }}, d.id));
+  });
+  body.appendChild(soField("Blocked by (decisions)", bpWrap));
+
+  // checklist
+  const clWrap=el("div",{});
+  (a.checklist||[]).forEach((item,idx)=>{
+    const row=el("div",{class:"check"});
+    row.appendChild(el("input",{type:"checkbox", checked:item.done?"checked":null, onchange:(e)=>{ item.done=e.target.checked; touch(a); saveData(); openAsset(a.id); render(); }}));
+    const lab=el("div",{class:"clabel"+(item.done?" done":"")});
+    lab.appendChild(el("input",{type:"text", value:item.label, oninput:(e)=>{ item.label=e.target.value; touch(a); saveData(); }}));
+    row.appendChild(lab);
+    row.appendChild(el("button",{class:"minibtn", title:"Up", disabled: idx===0?"disabled":null, onclick:()=>{ const c=a.checklist; [c[idx-1],c[idx]]=[c[idx],c[idx-1]]; saveData(); openAsset(a.id); }},"↑"));
+    row.appendChild(el("button",{class:"minibtn", title:"Down", disabled: idx===a.checklist.length-1?"disabled":null, onclick:()=>{ const c=a.checklist; [c[idx+1],c[idx]]=[c[idx],c[idx+1]]; saveData(); openAsset(a.id); }},"↓"));
+    row.appendChild(el("button",{class:"minibtn", title:"Delete", onclick:()=>{ a.checklist.splice(idx,1); touch(a); saveData(); openAsset(a.id); render(); }},"×"));
+    clWrap.appendChild(row);
+  });
+  clWrap.appendChild(el("button",{class:"linkbtn", onclick:()=>{ a.checklist=a.checklist||[]; a.checklist.push({id:nextId("c"), label:"", done:false}); touch(a); saveData(); openAsset(a.id); }},"+ add checklist item"));
+  body.appendChild(soField("Checklist", clWrap));
+
+  body.appendChild(soField("Notes", el("textarea",{rows:4, value:a.notes||"", oninput:(e)=>{ a.notes=e.target.value; touch(a); saveData(); }})));
+
+  so.appendChild(body);
+
+  const foot=el("div",{class:"sofoot"});
+  foot.appendChild(el("span",{class:"updated",text:"updated "+fmtTime(a.updatedAt)}));
+  const del=el("button",{class:"delbtn", onclick:()=>armDelete(a, del)},"Delete");
+  foot.appendChild(del);
+  so.appendChild(foot);
+
+  // A textarea's `value` attribute does not populate its content — copy it across.
+  so.querySelectorAll("textarea").forEach(t=>{ if(t.getAttribute("value")!=null) t.value=t.getAttribute("value"); });
+
+  document.getElementById("scrim").classList.add("show");
+  so.classList.add("show");
+}
+function soField(label, control){
+  const f=el("div",{class:"sofield"});
+  f.appendChild(el("label",{text:label}));
+  f.appendChild(control);
+  return f;
+}
+function toggleBlockedBy(a, id){
+  a.blockedBy=a.blockedBy||[];
+  const i=a.blockedBy.indexOf(id);
+  if(i<0){ a.blockedBy.push(id); if(a.status!=="blocked") a.status="blocked"; }
+  else { a.blockedBy.splice(i,1); if(a.blockedBy.length===0 && a.status==="blocked") a.status="todo"; }
+  touch(a); saveData(); openAsset(a.id); render();
+}
+function syncCardTitle(a){
+  const card=document.querySelector('.card[data-id="'+a.id+'"] .title');
+  if(card) card.textContent=a.title;
+}
+function armDelete(a, btn){
+  if(delArmed){ if(delTimer) clearTimeout(delTimer); doDeleteAsset(a); return; }
+  delArmed=true; btn.classList.add("arm"); btn.textContent="Confirm delete";
+  delTimer=setTimeout(()=>{ delArmed=false; btn.classList.remove("arm"); btn.textContent="Delete"; },3000);
+}
+function doDeleteAsset(a){
+  captureUndo("Deleted asset “"+a.title+"”");
+  state.assets=state.assets.filter(x=>x.id!==a.id);
+  saveData(); closeAsset(); render(); commitUndo();
+}
+function closeAsset(){
+  openAssetId=null;
+  document.getElementById("scrim").classList.remove("show");
+  document.getElementById("slideover").classList.remove("show");
+}
+function fmtTime(iso){ if(!iso) return "—"; const d=new Date(iso); if(isNaN(d)) return iso; return d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}); }
+
+/* =================================================================
+   Export / import
+   ================================================================= */
+function download(filename, text, mime){
+  const blob=new Blob([text], {type:mime||"text/plain"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); },100);
+}
+function exportJSON(){
+  state.meta.lastExport=new Date().toISOString();
+  saveData(true);
+  download("course-tracker-"+todayISO()+".json", JSON.stringify(state,null,2), "application/json");
+  showToast("Exported JSON backup", null);
+}
+function handleImport(file){
+  const reader=new FileReader();
+  reader.onload=()=>{
+    let parsed;
+    try{ parsed=JSON.parse(reader.result); }catch(e){ showToast("Import failed: not valid JSON", null); return; }
+    if(!parsed || !parsed.sessions || !parsed.assets){ showToast("Import failed: not a tracker file", null); return; }
+    captureUndo("Reverted import");
+    if(parsed.schemaVersion!==SCHEMA_VERSION){ backupRaw(reader.result); parsed=migrate(parsed); }
+    state=normalize(parsed); saveData(true); render(); closeAsset(); commitUndo();
+  };
+  reader.readAsText(file);
+}
+function resetToSeed(){
+  captureUndo("Restored previous data");
+  state=normalize(clone(SEED)); saveData(true); ui.menuOpen=false; render(); commitUndo();
+}
+
+function exportMarkdown(){
+  let md="# "+state.meta.courseTitle+"\n\n";
+  if(state.meta.cohort) md+="_"+state.meta.cohort+"_\n\n";
+  state.sessions.slice().sort((a,b)=>a.number-b.number).forEach(s=>{ md+=sessionMarkdown(s)+"\n---\n\n"; });
+  md+="\n# Decisions register\n\n";
+  md+="| ID | Decision | Owner | Status | Answer |\n|---|---|---|---|---|\n";
+  state.decisions.forEach(d=>{ md+="| "+d.id+" | "+mdCell(d.title)+" | "+d.owner+" | "+d.status+" | "+mdCell(d.answer||"")+" |\n"; });
+  md+="\n# Asset status\n\n";
+  md+="| Session | Type | Asset | Status | Tier | Owner | Due |\n|---|---|---|---|---|---|---|\n";
+  state.assets.slice().sort((a,b)=>{
+    const an=a.sessionId?sessionById(a.sessionId).number:99, bn=b.sessionId?sessionById(b.sessionId).number:99;
+    return an-bn || a.type.localeCompare(b.type);
+  }).forEach(a=>{
+    const sn=a.sessionId?("S"+sessionById(a.sessionId).number):"course";
+    md+="| "+sn+" | "+a.type+" | "+mdCell(a.title)+" | "+a.status+" | "+(a.tier||"")+" | "+(a.owner||"")+" | "+(a.due||"")+" |\n";
+  });
+  download("course-"+todayISO()+".md", md, "text/markdown");
+  showToast("Exported course markdown", null);
+}
+function mdCell(s){ return String(s||"").replace(/\n/g," ").replace(/\|/g,"\\|"); }
+
+function sessionMarkdown(s){
+  let md="## Session "+s.number+" — "+s.title+"\n\n";
+  const bits=[]; if(s.block) bits.push("**Block:** "+s.block); if(s.lens) bits.push("**Lens:** "+s.lens);
+  bits.push("**Minutes:** "+segMinutes(s)+(segMinutes(s)!==90?" (≠90)":""));
+  md+=bits.join("  ·  ")+"\n\n";
+  if(s.question) md+="**Question.** "+s.question+"\n\n";
+  [["provocation","Provocation"],["input","Input"],["activity","Activity"],["artefact","Artefact"]].forEach(([k,l])=>{
+    if(s[k].body || s[k].minutes) md+="### "+l+" ("+s[k].minutes+" min)\n\n"+(s[k].body||"")+"\n\n";
+  });
+  if(s.fallback) md+="### Offline fallback\n\n"+s.fallback+"\n\n";
+  if(s.readings.length){ md+="### Readings\n\n"; s.readings.forEach(r=>{ md+="- "+r.citation+" _("+r.status+")_\n"; }); md+="\n"; }
+  if(s.confidenceFlags.length){ md+="### Confidence flags\n\n"; s.confidenceFlags.forEach(f=>{ md+="- ⚑ "+f+"\n"; }); md+="\n"; }
+  if(s.decisionRefs.length) md+="**Decisions:** "+s.decisionRefs.join(", ")+"\n\n";
+  if(s.notes) md+="### Notes\n\n"+s.notes+"\n\n";
+  return md.trim()+"\n";
+}
+function copySessionMarkdown(s){
+  const md=sessionMarkdown(s);
+  const done=()=>showToast("Session copied as markdown", null);
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(md).then(done, ()=>fallbackCopy(md,done)); }
+  else fallbackCopy(md, done);
+}
+function fallbackCopy(text, done){
+  const ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select();
+  try{ document.execCommand("copy"); done(); }catch(e){}
+  document.body.removeChild(ta);
+}
+function exportDecisionsMarkdown(){
+  let md="# Client meeting agenda — open decisions\n\n_"+state.meta.courseTitle+"_\n\n";
+  ["client","both","hult"].forEach(owner=>{
+    const rows=state.decisions.filter(d=>d.owner===owner);
+    if(!rows.length) return;
+    md+="## Owner: "+owner+"\n\n";
+    rows.forEach(d=>{
+      const blk=blockedByDecision(d.id).length;
+      md+="### "+d.id+" — "+d.title+"  ("+d.status+")\n\n"+d.body+"\n\n";
+      if(blk) md+="_Blocks "+blk+" asset(s)._\n\n";
+      if(d.answer) md+="**Answer:** "+d.answer+"\n\n";
+    });
+  });
+  download("client-decisions-"+todayISO()+".md", md, "text/markdown");
+  showToast("Exported decisions markdown", null);
+}
+
+/* =================================================================
+   Keyboard + global
+   ================================================================= */
+document.addEventListener("keydown",e=>{
+  const t=e.target, tag=(t.tagName||"").toLowerCase();
+  const typing = tag==="input"||tag==="textarea"||tag==="select"||t.isContentEditable;
+  if((e.metaKey||e.ctrlKey) && (e.key==="s"||e.key==="S")){ e.preventDefault(); exportJSON(); return; }
+  if(e.key==="Escape"){ if(openAssetId) closeAsset(); if(ui.menuOpen){ ui.menuOpen=false; render(); } return; }
+  if(typing) return;
+  if(e.key==="/"){ e.preventDefault(); const sb=document.getElementById("search"); if(sb){ sb.focus(); sb.select(); } return; }
+  if(e.key==="1"){ setView("board"); }
+  else if(e.key==="2"){ setView("matrix"); }
+  else if(e.key==="3"){ setView("sessions"); }
+  else if(e.key==="4"){ setView("decisions"); }
+});
+document.addEventListener("click",()=>{ if(ui.menuOpen){ ui.menuOpen=false; render(); } });
+document.getElementById("scrim").addEventListener("click", closeAsset);
+document.getElementById("importfile").addEventListener("change",e=>{ const f=e.target.files[0]; if(f) handleImport(f); e.target.value=""; });
+if(window.matchMedia){ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{ if(ui.theme==="auto") applyTheme(); }); }
+
+/* =================================================================
+   Boot
+   ================================================================= */
+ui=loadUI();
+loadData();
+render();
+
+/* -----------------------------------------------------------------
+   Deliberately left out (spec §8 non-goals / not in §3–§4):
+   multi-user/sync, auth, calendar/timetable generator, slide
+   generation, file upload, rich-text editor, recurring tasks,
+   notifications, mobile-first kanban, any server component.
+   Open item (§9): per-session date overrides not built — derive
+   from meta.startDate + sessionsPerWeek if the timetable proves
+   irregular. Standing artefacts modelled as course-level admin
+   assets with 15-item checklists per §9 recommendation.
+   ----------------------------------------------------------------- */
+</script>
