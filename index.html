@@ -170,17 +170,23 @@ a{color:inherit}
 .fdiv{width:1px;height:20px;background:var(--border)}
 .clearf{margin-left:auto;font-size:var(--fs-xs);color:var(--muted);background:none;border:0;text-decoration:underline;text-underline-offset:2px}
 
-.board{display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;align-items:flex-start}
-.col{flex:1 0 190px;min-width:190px;background:var(--panel);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;max-height:calc(100vh - 220px)}
+.view-board{padding-bottom:12px}
+.boardwrap{display:flex;flex-direction:column;height:calc(100vh - 76px);min-height:440px}
+.boardwrap .filters{flex:none}
+.board{display:flex;gap:10px;overflow-x:auto;overflow-y:hidden;flex:1 1 auto;min-height:0;align-items:stretch}
+.col{flex:1 1 190px;min-width:190px;background:var(--panel);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;height:100%}
 .col.dragover{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent) inset}
-.col.collapsed{flex:0 0 46px;min-width:46px}
-.colhead{display:flex;align-items:center;gap:6px;padding:9px 10px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+.col.collapsed{flex:0 0 44px;min-width:44px}
+.colhead{display:flex;align-items:center;gap:6px;padding:9px 10px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;flex:none}
+.colhead:hover{background:var(--surface)}
+.colhead .caret{color:var(--faint);font-size:9px;flex:none;line-height:1}
 .colhead .dot{width:8px;height:8px;border-radius:50%;flex:none}
 .colhead .name{font-size:var(--fs-sm);font-weight:var(--w-semi);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .colhead .cnt{margin-left:auto;font-family:var(--mono);font-size:var(--fs-xs);color:var(--muted)}
-.col.collapsed .colhead{writing-mode:vertical-rl;transform:rotate(180deg);justify-content:flex-start;height:100%;padding:10px 8px}
-.col.collapsed .cnt{margin-left:0;margin-top:6px}
-.collist{padding:8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
+.col.collapsed .colhead{writing-mode:vertical-rl;transform:rotate(180deg);justify-content:flex-start;height:100%;padding:12px 7px;gap:10px}
+.col.collapsed .colhead:hover{background:transparent}
+.col.collapsed .cnt{margin-left:0}
+.collist{padding:8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1 1 auto;min-height:0}
 .col.collapsed .collist{display:none}
 
 .card{
@@ -353,8 +359,9 @@ input.titleedit:focus{border-color:var(--accent);background:var(--surface);outli
 @media (max-width:900px){
   .sesslayout{grid-template-columns:1fr}
   .railwrap{position:static;max-height:none}
-  .board{flex-direction:column}
-  .col{width:100%;max-height:none}
+  .boardwrap{height:auto;min-height:0}
+  .board{flex-direction:column;overflow-y:visible}
+  .col{width:100%;height:auto;max-height:none}
   .nav button span.txt{display:none}
 }
 
@@ -1023,7 +1030,7 @@ function anyFilterActive(){
 }
 
 function renderBoard(){
-  const wrap=el("div",{});
+  const wrap=el("div",{class:"boardwrap"});
   wrap.appendChild(renderFilters());
   const board=el("div",{class:"board", id:"board"});
   STATUSES.forEach(st=>board.appendChild(renderColumn(st)));
@@ -1082,7 +1089,8 @@ function renderColumn(st){
   col.addEventListener("dragleave",()=>col.classList.remove("dragover"));
   col.addEventListener("drop",e=>{ e.preventDefault(); col.classList.remove("dragover"); const id=e.dataTransfer.getData("text/plain"); moveAsset(id, st.id); });
 
-  const head=el("div",{class:"colhead", onclick:()=>{ ui.collapsed[st.id]=!collapsed; saveUI(); render(); }});
+  const head=el("div",{class:"colhead", title: collapsed?"Expand column":"Collapse column", onclick:()=>{ ui.collapsed[st.id]=!collapsed; saveUI(); render(); }});
+  head.appendChild(el("span",{class:"caret", text: collapsed?"▶":"▼"}));
   head.appendChild(el("span",{class:"dot", style:"background:var(--st-"+st.id+"-bg);box-shadow:0 0 0 1px var(--st-"+st.id+"-br) inset"}));
   head.appendChild(el("span",{class:"name",text:st.label}));
   const cnt = anyFilterActive() ? (shown.length+" of "+all.length) : String(all.length);
